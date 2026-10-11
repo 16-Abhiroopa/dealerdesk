@@ -16,18 +16,20 @@
   - Memory: PostgreSQL session-isolated message history; refuses to mix session context.
   - Safety: Never confirms orders, declines off-topic prompts, asks clarifying questions on ambiguous queries.
   - Tests passing: 6 tests covering validation, off-topic, ambiguity, grounding, multi-turn, isolation.
+  - Committed in `a597ccd`.
 
-- [ ] **Phase 3: Forecasting & Reorder Suggestions (Part D - ML)**
-  - Data ingestion & feature engineering on `sales_history.csv`, `lead_times.csv`, `promo_calendar.csv`, `festival_calendar.csv`.
-  - Chronological backtesting with zero future leakage (rolling window validation).
-  - Model comparison: Baselines (Naive/Last value, 4-week moving average, same-week last year seasonal) vs. ML (LightGBM/Ridge regression with lag features, promo, and festive distance).
-  - Forecast generation: Export exactly 160 rows into `ml/forecast.csv` for the 40 SKUs across the 4 future weeks.
-  - API endpoints:
-    - `GET /api/forecast/{sku}/`: returns 4-week forecast for valid forecast SKUs, 404 otherwise.
-    - `GET /api/reorder-suggestions/`: 40 items computed using exact formulas for lead time demand, sample std dev $\sigma$, safety stock, and live stock.
-  - Unit tests for forecasting APIs and calculation fidelity.
+- [x] **Phase 3: Forecasting & Reorder Suggestions (Part D - ML)**
+  - Feature engineering and chronological backtesting (zero future leakage, strictly using data <= train_cutoff).
+  - Multiplicative decomposition model capturing moving Diwali lift curve (`weeks_to_diwali`) and planned promotional boosts.
+  - Beats all three baselines (Naive last, 4-week moving average, same-week last year) on all evaluation splits.
+  - Generated and committed `ml/forecast.csv` (160 rows across 40 SKUs for the 4 forecast weeks).
+  - Implemented endpoints:
+    - `GET /api/forecast/{sku}/` (4-week forecast or 404 with exact contract error shape).
+    - `GET /api/reorder-suggestions/` (40 items computed using exact formulas for lead time demand, sample std dev $\sigma$, safety stock, and live stock).
+  - Comprehensive unit tests in `tests/test_forecasting.py` passing (4 tests).
 
-- [ ] **Phase 4: Smoke Test Validation & Comprehensive Documentation**
-  - Run full `smoke_test.py --track aiml` and `--all`.
-  - Complete `DECISIONS.md` addressing all 8 questions required in the assignment brief.
-  - Update `README.md` with instructions, model details, setup steps, and architecture overview.
+- [x] **Phase 4: Smoke Test Validation & Comprehensive Documentation**
+  - Full smoke test passing: `smoke_test.py --track aiml` 10/10 checks passed.
+  - Django track order engine lifecycle verified.
+  - Authored comprehensive `DECISIONS.md` thoroughly answering all 8 viva questions with exact code citations and ML metrics.
+  - Updated `README.md` with LLM provider details, default models, setup instructions, and architecture breakdown.

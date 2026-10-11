@@ -1,41 +1,79 @@
-# DealerDesk starter
+# VIKMO DealerDesk — AI / ML Track Implementation
 
-A minimal Django project that already follows the run contract. It has **no models and no business logic**: designing those is the assignment.
+An AI-native commerce and inventory management backend built with Django REST Framework and PostgreSQL, featuring an autonomous conversational parts ordering agent and a demand forecasting engine.
 
-What's here:
+---
 
-- `dealerdesk/settings.py` reads `DATABASE_URL`, `SUPPLIER_API_URL`, `SUPPLIER_API_KEY` and the LLM keys (Gemini, OpenAI, Anthropic, Groq), refuses anything but PostgreSQL, and turns off authentication for the API.
-- `GET /api/health/` returns `{"status": "ok"}`.
-- `python manage.py seed_data` exists but does nothing yet.
-- `requirements.txt` with Django, DRF, the Postgres driver and `requests`. Add your LLM provider's SDK if you build the assistant.
+## 1. Supported LLM Providers & Models
 
-## Set up
+The Dealer Assistant (`POST /api/assistant/chat/`) automatically adapts to the available API key in environment variables:
 
-1. Copy everything in this folder into the root of your repo, next to `data/`.
-2. Get a PostgreSQL database:
-   - **Hosted, free:** create a project on neon.tech or supabase.com and copy its connection string, or
-   - **Local:** install PostgreSQL and run `createdb dealerdesk`.
-3. Copy `.env.example` to `.env` and fill in `DATABASE_URL` (and your LLM key if you build the assistant).
-4. Install and run:
+| Provider | Environment Variable | Default Model | SDK Used |
+|---|---|---|---|
+| **Google Gemini** | `GEMINI_API_KEY` | `gemini-2.5-flash` | `google-genai` |
+| **Groq** | `GROQ_API_KEY` | `llama-3.3-70b-versatile` | `groq` |
+| **OpenAI** | `OPENAI_API_KEY` | `gpt-4o-mini` | `openai` |
+| **Anthropic** | `ANTHROPIC_API_KEY` | `claude-3-5-haiku-20241022` | `anthropic` |
+| **Offline / Test Mock** | `USE_MOCK_LLM=1` | Deterministic Rule-Based Agent | Built-in |
 
+---
+
+## 2. Setup & Run Contract
+
+### Prerequisites:
+- Python 3.11+
+- PostgreSQL database (e.g. Neon, Supabase, or local PostgreSQL)
+
+### Running Locally:
 ```bash
-python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
+# 1. Activate virtual environment
+python -m venv .venv
+source .venv/bin/activate    # On Windows: .venv\Scripts\activate
+
+# 2. Install dependencies
 pip install -r requirements.txt
-python manage.py migrate
+
+# 3. Configure environment
+cp .env.example .env
+# Edit .env with your DATABASE_URL and LLM provider key
+
+# 4. Migrate and Seed Database (seeded twice to verify idempotency)
+python manage.py migrate --noinput
 python manage.py seed_data
-python manage.py runserver 0.0.0.0:8000
+python manage.py seed_data
+
+# 5. Start dev server
+python manage.py runserver 0.0.0.0:8000 --noreload
 ```
 
-5. Check it: `curl http://localhost:8000/api/health/` → `{"status": "ok"}`
+---
 
-## Before you submit
+## 3. Verification & Smoke Testing
 
-Reset to a fresh database, seed twice, and run the smoke test from the bundle:
-
+### Run Pytest Suite:
 ```bash
-python smoke_test.py --base-url http://localhost:8000 --track django   # or --track aiml
+pytest
 ```
+*Executes all 22 comprehensive unit tests across core models, draft orders, assistant tool loop, grounding verifications, session isolation, and ML reorder suggestions.*
 
-Add new packages to `requirements.txt` as you go. The grader installs it on Linux with Python 3.11+.
+### Run Smoke Test:
+```bash
+python smoke_test.py --base-url http://localhost:8000 --track aiml
+```
+*Validates 10/10 contract checks: Health, Products, Dealers, Inventory, Draft Orders, Validation Errors, Dealer Assistant, and Forecasting endpoints.*
 
-Docker is optional. If you add a `Dockerfile` or `docker-compose.yml` for yourself, keep the plain commands above working too: the grader uses those, not Docker.
+---
+
+## 4. Key Components
+
+- **Backend Core & Order Engine**: Relational schema (`Product`, `Inventory`, `Dealer`, `Order`, `OrderItem`, `IdempotencyKey`), atomic order confirmation with `select_for_update` stock lock, line-by-line 18% GST calculation, and daily sequence order numbering `ORD-YYYYMMDD-NNNN`.
+- **Dealer Assistant (GenAI)**: Autonomous multi-step tool-calling agent (`search_parts`, `check_stock`, `create_draft_order`) with live PostgreSQL grounding, prompt injection defenses against adversarial supplier descriptions, and session isolation.
+- **Forecasting & Reorder (ML)**: Decomposed demand forecasting model incorporating relative Diwali festive lift (`weeks_to_diwali`), planned promotional boosts, and cold-start mitigations. Generates `ml/forecast.csv` (160 rows across 40 SKUs) and powers `/api/forecast/{sku}/` and `/api/reorder-suggestions/`.
+- **Technical Decisions & Viva Answers**: Full explanations, architecture walk-throughs, and code citations are available in [DECISIONS.md](DECISIONS.md).
+
+---
+
+## 5. Video Walkthrough
+
+- **Link**: *[Walkthrough Video Link (Unlisted YouTube / Loom / Google Drive)]*
+- **Focus**: AI/ML track assistant tool-calling loop, live database grounding, prompt injection defenses, and ML backtesting results.
