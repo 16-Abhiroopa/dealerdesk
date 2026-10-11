@@ -77,6 +77,20 @@ This spins up PostgreSQL on port `5432` and DealerDesk on port `8000`, running a
 
 ## 4. Verification & Smoke Testing
 
+### Run Frontend Dashboard:
+```bash
+# Standalone Vite Dev Server (Hot module reload & proxy to Django API)
+cd frontend
+npm install
+npm run dev
+# Live preview at: http://localhost:3000/
+
+# Integrated Django + WhiteNoise Production Serving
+cd frontend && npm run build && cd ..
+python manage.py collectstatic --noinput
+# Unified portal & API at: http://127.0.0.1:8000/
+```
+
 ### Run Pytest Suite:
 ```bash
 pytest
@@ -85,7 +99,7 @@ pytest
 
 ### Run Smoke Test:
 ```bash
-# AI/ML track verification
+# AI/ML track verification (10/10 checks)
 python smoke_test.py --base-url http://localhost:8000 --track aiml
 
 # Complete contract verification (12/12 passing including all optional parts)
@@ -99,12 +113,25 @@ python smoke_test.py --base-url http://localhost:8000 --all
 - **Backend Core & Order Engine**: Relational schema (`Product`, `Inventory`, `Dealer`, `Order`, `OrderItem`, `IdempotencyKey`), atomic order confirmation with `select_for_update` stock locks, line-by-line 18% GST calculation, and daily sequence order numbering `ORD-YYYYMMDD-NNNN`.
 - **Dealer Assistant (GenAI)**: Autonomous multi-step tool-calling agent (`search_parts`, `check_stock`, `create_draft_order`) with live PostgreSQL grounding, prompt injection defenses against adversarial supplier descriptions, and session isolation.
 - **Forecasting & Reorder (ML)**: Decomposed demand forecasting model incorporating relative Diwali festive lift (`weeks_to_diwali`), planned promotional boosts, and cold-start mitigations. Generates `ml/forecast.csv` (160 rows across 40 SKUs) and powers `/api/forecast/{sku}/` and `/api/reorder-suggestions/`.
+- **Frontend Dashboard (Part E)**: Responsive React + TypeScript dashboard with dark-theme glassmorphism, searchable catalogue, live dealer inventory management, draft order workflow, AI ordering chat console, and interactive forecast charts.
 - **Resilient Supplier Sync**: Paginated sync engine with 429 `Retry-After` honoring, exponential backoff for 5xx/network errors, all-or-nothing transactional commits, and invalid/duplicate SKU sanitation.
 - **Technical Decisions & Viva Answers**: Full explanations, architecture walk-throughs, and code citations are available in [DECISIONS.md](DECISIONS.md).
 
 ---
 
-## 6. Video Walkthrough
+## 6. Video Walkthrough (5-Minute Script & Guide)
 
 - **Link**: *[Walkthrough Video Link (Unlisted YouTube / Loom / Google Drive)]*
-- **Focus**: AI/ML track assistant tool-calling loop, live database grounding, prompt injection defenses, and ML backtesting results.
+- **Recommended 5-Minute Agenda**:
+  1. **0:00 - 0:45 | Overview & Architecture**: Show repo structure, PostgreSQL configuration, and unified React + DRF architecture.
+  2. **0:45 - 2:00 | Dealer Assistant (Part C)**:
+     - Demonstrate `search_parts` and live inventory tool grounding.
+     - Show prompt injection defense: untrusted text from supplier (e.g. `CHN-1037` promo code) is ignored by the LLM.
+     - Demonstrate multi-turn drafting of an order and safety boundary (LLM refuses to confirm orders).
+  3. **2:00 - 3:15 | Demand Forecasting & Reorder (Part D)**:
+     - Explain feature engineering without data leakage, Diwali festive lift curve, and baseline comparisons (beats Naive, MA-4, and YoY).
+     - Show `/api/forecast/{sku}/` chart in the UI and `/api/reorder-suggestions/` formula verification ($SS = z \times \sigma \times \sqrt{L}$).
+  4. **3:15 - 4:15 | Frontend Dashboard (Part E) & Live API Integration**:
+     - Walk through Overview KPIs, Searchable Catalogue, Inventory edits, and Orders tab.
+  5. **4:15 - 5:00 | Test Results & Deployment Verification**:
+     - Show all 24 pytest tests passing and `smoke_test.py --track aiml` 10/10 pass.

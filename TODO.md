@@ -43,3 +43,15 @@
   - Total test suite: 24/24 unit tests passing in pytest across all apps.
   - Complete `DECISIONS.md` thoroughly answering all 8 viva questions with exact code citations and ML metrics.
   - Updated `README.md` with LLM provider details, default models, setup instructions, and architecture breakdown.
+
+- [x] **Phase 6: Frontend Dashboard (Part E) & Render Production Deployment**
+  - Modern, responsive React + TypeScript dashboard with dark-theme glassmorphic UI (`frontend/`).
+  - Integrated features:
+    - Overview KPIs, low stock alerts, quick actions.
+    - Searchable parts catalogue with real-time stock, category/vehicle filtering, and pagination.
+    - Dealers and live inventory management with inline stock adjustments.
+    - Draft orders management with lines, financial summary, and cancellation.
+    - AI Assistant interactive console connected to `/api/assistant/chat/` with live grounding and tool call transparency.
+    - Demand forecasting interactive charts and automated reorder suggestions table.
+  - Integrated with Django backend via WhiteNoise and `core.views.frontend_index` SPA routing.
+  - Production deployment configured for Render via `render.yaml` and `Procfile` on free tier.
