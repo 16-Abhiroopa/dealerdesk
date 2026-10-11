@@ -64,7 +64,7 @@ TEMPLATES = [
 WSGI_APPLICATION = "dealerdesk.wsgi.application"
 
 # ---- Database: PostgreSQL only -------------------------------------------------------
-DATABASE_URL = os.environ.get("DATABASE_URL")
+DATABASE_URL = (os.environ.get("DATABASE_URL") or "").strip()
 if not DATABASE_URL:
     raise ImproperlyConfigured("Set DATABASE_URL to a PostgreSQL URL, e.g. postgres://user:pass@localhost:5432/dealerdesk")
 DATABASES = {"default": dj_database_url.parse(DATABASE_URL, conn_max_age=0)}
