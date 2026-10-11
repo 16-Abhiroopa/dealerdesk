@@ -27,9 +27,19 @@
     - `GET /api/forecast/{sku}/` (4-week forecast or 404 with exact contract error shape).
     - `GET /api/reorder-suggestions/` (40 items computed using exact formulas for lead time demand, sample std dev $\sigma$, safety stock, and live stock).
   - Comprehensive unit tests in `tests/test_forecasting.py` passing (4 tests).
+  - Committed in `b824bbc`.
 
-- [x] **Phase 4: Smoke Test Validation & Comprehensive Documentation**
-  - Full smoke test passing: `smoke_test.py --track aiml` 10/10 checks passed.
-  - Django track order engine lifecycle verified.
-  - Authored comprehensive `DECISIONS.md` thoroughly answering all 8 viva questions with exact code citations and ML metrics.
+- [x] **Phase 4: Supplier Sync Integration (Part B - Bonus)**
+  - Implemented resilient paginated feed fetcher adhering strictly to §8 of API_CONTRACT.md.
+  - Resilient retries on 429 (`Retry-After`), 5xx (exponential backoff), and connection errors up to 5 attempts per page.
+  - All-or-nothing guarantee: returns 502 `SUPPLIER_UNAVAILABLE` on unrecovered failures without dirty writes.
+  - Data hygiene: filters and lists `rejected` for invalid prices or missing SKUs, deduplicates by latest `updated_at`.
+  - Catalogue reconciliation: updates differing fields, creates new items with stock 0, never touches local inventory stock.
+  - Idempotent: verified subsequent runs change nothing (`created: 0, updated: 0`).
+  - Passes 12/12 checks in `smoke_test.py --all` and 2 dedicated unit tests.
+
+- [x] **Phase 5: Full Smoke Test Validation & Comprehensive Documentation**
+  - Full smoke test passing: `smoke_test.py --track aiml` (10/10) and `smoke_test.py --all` (12/12).
+  - Total test suite: 24/24 unit tests passing in pytest across all apps.
+  - Complete `DECISIONS.md` thoroughly answering all 8 viva questions with exact code citations and ML metrics.
   - Updated `README.md` with LLM provider details, default models, setup instructions, and architecture breakdown.

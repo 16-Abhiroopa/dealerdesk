@@ -3,10 +3,12 @@ from products.views import (
     ProductListCreateView,
     ProductDetailView,
     InventoryUpdateView,
+    SupplierSyncView,
 )
 
 urlpatterns = [
     path("products/", ProductListCreateView.as_view(), name="product-list-create"),
     path("products/<str:sku>/", ProductDetailView.as_view(), name="product-detail"),
     path("inventory/<str:sku>/", InventoryUpdateView.as_view(), name="inventory-update"),
+    path("sync/supplier/", SupplierSyncView.as_view(), name="supplier-sync"),
 ]

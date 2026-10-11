@@ -91,3 +91,10 @@ class InventoryUpdateView(APIView):
         inv.save(update_fields=["quantity", "updated_at"])
 
         return Response({"sku": sku, "quantity": quantity}, status=status.HTTP_200_OK)
+
+
+class SupplierSyncView(APIView):
+    def post(self, request):
+        from products.sync_service import run_supplier_sync
+        result = run_supplier_sync()
+        return Response(result, status=status.HTTP_200_OK)
