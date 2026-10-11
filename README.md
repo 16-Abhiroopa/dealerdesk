@@ -22,7 +22,7 @@ The Dealer Assistant (`POST /api/assistant/chat/`) automatically adapts to the a
 
 ### Prerequisites:
 - Python 3.11+
-- PostgreSQL database (e.g. Neon, Supabase, or local PostgreSQL)
+- PostgreSQL database (e.g. Neon, Supabase, Render, or local PostgreSQL)
 
 ### Running Locally:
 ```bash
@@ -48,32 +48,63 @@ python manage.py runserver 0.0.0.0:8000 --noreload
 
 ---
 
-## 3. Verification & Smoke Testing
+## 3. Cloud Deployment (Render / Railway / Docker)
+
+The repository includes ready-to-deploy Infrastructure-as-Code configurations:
+
+### Option A: Deploy to Render (Recommended Free PaaS)
+1. Push this repository to GitHub.
+2. Sign up on [Render.com](https://render.com) and click **New > Blueprint**.
+3. Select your GitHub repository.
+4. Render automatically parses [`render.yaml`](render.yaml), provisions a **free PostgreSQL database** (`dealerdesk-db`), runs migrations, seeds data, and launches the web service with Gunicorn.
+5. In your Render Dashboard, add your `GEMINI_API_KEY` (or `GROQ_API_KEY`) under Environment Variables.
+
+### Option B: Deploy to Railway
+1. Sign up on [Railway.app](https://railway.app).
+2. Click **New Project > Deploy from GitHub repo**.
+3. Add a **PostgreSQL** database service in Railway.
+4. Set the `DATABASE_URL` environment variable reference `${{Postgres.DATABASE_URL}}`.
+5. Railway automatically detects [`railway.toml`](railway.toml) and [`Procfile`](Procfile), runs migrations, seeds data, and starts the service.
+
+### Option C: Containerized Deployment (Docker Compose)
+To run locally or on any VPS using Docker:
+```bash
+docker compose up --build
+```
+This spins up PostgreSQL on port `5432` and DealerDesk on port `8000`, running automatic migrations and idempotent data seeding.
+
+---
+
+## 4. Verification & Smoke Testing
 
 ### Run Pytest Suite:
 ```bash
 pytest
 ```
-*Executes all 22 comprehensive unit tests across core models, draft orders, assistant tool loop, grounding verifications, session isolation, and ML reorder suggestions.*
+*Executes all 24 comprehensive unit tests across core models, draft orders, assistant tool loop, grounding verifications, session isolation, ML reorder suggestions, and supplier sync.*
 
 ### Run Smoke Test:
 ```bash
+# AI/ML track verification
 python smoke_test.py --base-url http://localhost:8000 --track aiml
+
+# Complete contract verification (12/12 passing including all optional parts)
+python smoke_test.py --base-url http://localhost:8000 --all
 ```
-*Validates 10/10 contract checks: Health, Products, Dealers, Inventory, Draft Orders, Validation Errors, Dealer Assistant, and Forecasting endpoints.*
 
 ---
 
-## 4. Key Components
+## 5. Key Architecture Components
 
-- **Backend Core & Order Engine**: Relational schema (`Product`, `Inventory`, `Dealer`, `Order`, `OrderItem`, `IdempotencyKey`), atomic order confirmation with `select_for_update` stock lock, line-by-line 18% GST calculation, and daily sequence order numbering `ORD-YYYYMMDD-NNNN`.
+- **Backend Core & Order Engine**: Relational schema (`Product`, `Inventory`, `Dealer`, `Order`, `OrderItem`, `IdempotencyKey`), atomic order confirmation with `select_for_update` stock locks, line-by-line 18% GST calculation, and daily sequence order numbering `ORD-YYYYMMDD-NNNN`.
 - **Dealer Assistant (GenAI)**: Autonomous multi-step tool-calling agent (`search_parts`, `check_stock`, `create_draft_order`) with live PostgreSQL grounding, prompt injection defenses against adversarial supplier descriptions, and session isolation.
 - **Forecasting & Reorder (ML)**: Decomposed demand forecasting model incorporating relative Diwali festive lift (`weeks_to_diwali`), planned promotional boosts, and cold-start mitigations. Generates `ml/forecast.csv` (160 rows across 40 SKUs) and powers `/api/forecast/{sku}/` and `/api/reorder-suggestions/`.
+- **Resilient Supplier Sync**: Paginated sync engine with 429 `Retry-After` honoring, exponential backoff for 5xx/network errors, all-or-nothing transactional commits, and invalid/duplicate SKU sanitation.
 - **Technical Decisions & Viva Answers**: Full explanations, architecture walk-throughs, and code citations are available in [DECISIONS.md](DECISIONS.md).
 
 ---
 
-## 5. Video Walkthrough
+## 6. Video Walkthrough
 
 - **Link**: *[Walkthrough Video Link (Unlisted YouTube / Loom / Google Drive)]*
 - **Focus**: AI/ML track assistant tool-calling loop, live database grounding, prompt injection defenses, and ML backtesting results.
