@@ -8,18 +8,29 @@ from orders.serializers import OrderSerializer
 from orders import services
 
 
+def get_authenticated_dealer(request):
+    user = getattr(request, "user", None)
+    if user and getattr(user, "is_authenticated", False):
+        return getattr(user, "dealer", None)
+    return None
+
+
 class OrderListCreateView(APIView):
     pagination_class = StandardResultsSetPagination
 
     def get(self, request):
         qs = Order.objects.select_related("dealer").prefetch_related("items__product").all()
 
-        dealer_id = request.query_params.get("dealer_id")
-        if dealer_id:
-            try:
-                qs = qs.filter(dealer_id=int(dealer_id))
-            except ValueError:
-                raise ValidationAppError("dealer_id query param must be an integer.")
+        auth_dealer = get_authenticated_dealer(request)
+        if auth_dealer:
+            qs = qs.filter(dealer=auth_dealer)
+        else:
+            dealer_id = request.query_params.get("dealer_id")
+            if dealer_id:
+                try:
+                    qs = qs.filter(dealer_id=int(dealer_id))
+                except ValueError:
+                    raise ValidationAppError("dealer_id query param must be an integer.")
 
         order_status = request.query_params.get("status")
         if order_status:
@@ -35,7 +46,15 @@ class OrderListCreateView(APIView):
         if not isinstance(data, dict):
             raise ValidationAppError("Request body must be a JSON object.")
 
-        dealer_id = data.get("dealer_id")
+        auth_dealer = get_authenticated_dealer(request)
+        if auth_dealer:
+            requested_dealer_id = data.get("dealer_id")
+            if requested_dealer_id and requested_dealer_id != auth_dealer.id:
+                raise ValidationAppError("You cannot create orders on behalf of another dealer.")
+            dealer_id = auth_dealer.id
+        else:
+            dealer_id = data.get("dealer_id")
+
         items = data.get("items")
 
         idempotency_key = request.headers.get("Idempotency-Key") or request.META.get("HTTP_IDEMPOTENCY_KEY")
@@ -64,6 +83,10 @@ class OrderDetailView(APIView):
         except Order.DoesNotExist:
             raise NotFoundAppError(f"Order '{order_number}' not found.")
 
+        auth_dealer = get_authenticated_dealer(request)
+        if auth_dealer and order.dealer_id != auth_dealer.id:
+            raise NotFoundAppError(f"Order '{order_number}' not found.")
+
         return Response(OrderSerializer(order).data)
 
     def put(self, request, order_number: str):
@@ -71,12 +94,30 @@ class OrderDetailView(APIView):
         if not isinstance(data, dict) or "items" not in data:
             raise ValidationAppError("Items list is required to update order.")
 
+        try:
+            existing = Order.objects.get(order_number=order_number)
+        except Order.DoesNotExist:
+            raise NotFoundAppError(f"Order '{order_number}' not found.")
+
+        auth_dealer = get_authenticated_dealer(request)
+        if auth_dealer and existing.dealer_id != auth_dealer.id:
+            raise ValidationAppError("You cannot update an order for another dealer.")
+
         order = services.update_draft_order(order_number, data["items"])
         return Response(OrderSerializer(order).data)
 
 
 class OrderConfirmView(APIView):
     def post(self, request, order_number: str):
+        try:
+            order = Order.objects.get(order_number=order_number)
+        except Order.DoesNotExist:
+            raise NotFoundAppError(f"Order '{order_number}' not found.")
+
+        auth_dealer = get_authenticated_dealer(request)
+        if auth_dealer and order.dealer_id != auth_dealer.id:
+            raise ValidationAppError("You cannot confirm an order for another dealer.")
+
         order = services.confirm_order(order_number)
         return Response(OrderSerializer(order).data)
 
@@ -95,5 +136,14 @@ class OrderDeliverView(APIView):
 
 class OrderCancelView(APIView):
     def post(self, request, order_number: str):
+        try:
+            order = Order.objects.get(order_number=order_number)
+        except Order.DoesNotExist:
+            raise NotFoundAppError(f"Order '{order_number}' not found.")
+
+        auth_dealer = get_authenticated_dealer(request)
+        if auth_dealer and order.dealer_id != auth_dealer.id:
+            raise ValidationAppError("You cannot cancel an order for another dealer.")
+
         order = services.cancel_order(order_number)
         return Response(OrderSerializer(order).data)

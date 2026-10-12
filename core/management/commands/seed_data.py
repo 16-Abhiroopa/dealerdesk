@@ -70,7 +70,7 @@ class Command(BaseCommand):
                     gstin = row.get("gstin", "").strip()
                     credit_limit = Decimal(row.get("credit_limit", "0.00").strip())
 
-                    Dealer.objects.update_or_create(
+                    dealer, _ = Dealer.objects.update_or_create(
                         dealer_code=dealer_code,
                         defaults={
                             "name": name,
@@ -81,6 +81,23 @@ class Command(BaseCommand):
                             "credit_limit": credit_limit,
                         },
                     )
+
+                    from django.contrib.auth.models import User
+                    from rest_framework.authtoken.models import Token
+
+                    if not dealer.user:
+                        username = dealer_code.lower()
+                        user = User.objects.filter(username=username).first()
+                        if not user:
+                            user = User.objects.create_user(
+                                username=username,
+                                email=email,
+                                password=f"DealerPass@{dealer_code}!",
+                            )
+                        dealer.user = user
+                        dealer.save(update_fields=["user"])
+
+                    Token.objects.get_or_create(user=dealer.user)
                     dealers_count += 1
 
         self.stdout.write(

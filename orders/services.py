@@ -39,6 +39,34 @@ def validate_item_quantity(qty):
     return qty
 
 
+def get_dealer_available_credit(dealer: Dealer, exclude_order_id: int = None) -> tuple[Decimal, Decimal]:
+    """Calculate (outstanding_committed_orders, available_credit) for a dealer."""
+    if dealer.credit_limit <= Decimal("0.00"):
+        return Decimal("0.00"), Decimal("999999999.00")
+    active_qs = Order.objects.filter(
+        dealer=dealer,
+        status__in=["CONFIRMED", "DISPATCHED"],
+    )
+    if exclude_order_id:
+        active_qs = active_qs.exclude(id=exclude_order_id)
+    outstanding = sum((o.grand_total for o in active_qs), Decimal("0.00"))
+    available_credit = max(Decimal("0.00"), dealer.credit_limit - outstanding)
+    return outstanding, available_credit
+
+
+def validate_dealer_credit(dealer: Dealer, grand_total: Decimal, exclude_order_id: int = None):
+    """Enforce that order grand_total does not exceed available credit limit."""
+    if dealer.credit_limit <= Decimal("0.00"):
+        return
+    outstanding, available = get_dealer_available_credit(dealer, exclude_order_id=exclude_order_id)
+    if grand_total > available:
+        raise ValidationAppError(
+            f"Credit limit exceeded for {dealer.name}. "
+            f"Available credit: ₹{available:.2f} (Credit Limit: ₹{dealer.credit_limit:.2f}, "
+            f"Outstanding Orders: ₹{outstanding:.2f}). Order total: ₹{grand_total:.2f}."
+        )
+
+
 def get_next_order_number() -> str:
     """Generate the next unique order number for today in Asia/Kolkata timezone."""
     now_ist = datetime.now(KOLKATA_TZ)
@@ -132,6 +160,7 @@ def create_draft_order(dealer_id: int, items_data: list, idempotency_key: str = 
             tax_total += calcs["line_tax"]
 
         grand_total = subtotal + tax_total
+        validate_dealer_credit(dealer, grand_total)
         order_number = get_next_order_number()
 
         order = Order.objects.create(
@@ -218,6 +247,7 @@ def update_draft_order(order_number: str, items_data: list) -> Order:
             tax_total += calcs["line_tax"]
 
         grand_total = subtotal + tax_total
+        validate_dealer_credit(order.dealer, grand_total, exclude_order_id=order.id)
 
         order.subtotal = subtotal
         order.tax_total = tax_total
@@ -251,6 +281,8 @@ def confirm_order(order_number: str) -> Order:
 
         if order.status != "DRAFT":
             raise InvalidTransitionAppError(f"Cannot confirm order in {order.status} status.")
+
+        validate_dealer_credit(order.dealer, order.grand_total, exclude_order_id=order.id)
 
         items = list(order.items.select_related("product").all())
         # Sort product IDs to prevent deadlocks across concurrent confirms

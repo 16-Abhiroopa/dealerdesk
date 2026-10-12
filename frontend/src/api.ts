@@ -80,10 +80,91 @@ export interface AssistantResponse {
 
 const API_BASE = '/api';
 
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem('dealerdesk_token');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Token ${token}`;
+  }
+  return headers;
+}
+
+export interface AuthResponse {
+  token: string;
+  dealer: Dealer;
+  credit_limit?: string;
+  outstanding_orders?: string;
+  available_credit?: string;
+}
+
 export const api = {
   getHealth: async () => {
     const res = await fetch(`${API_BASE}/health/`);
     return res.json();
+  },
+
+  loginDealer: async (usernameOrCode: string, password: string): Promise<AuthResponse> => {
+    const res = await fetch(`${API_BASE}/auth/login/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: usernameOrCode, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || 'Login failed');
+    if (data.token) localStorage.setItem('dealerdesk_token', data.token);
+    return data;
+  },
+
+  provisionDealer: async (dealerCode: string, verification: { email?: string; gstin?: string }, password: string): Promise<AuthResponse> => {
+    const res = await fetch(`${API_BASE}/auth/provision/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dealer_code: dealerCode, ...verification, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || 'Provisioning failed');
+    if (data.token) localStorage.setItem('dealerdesk_token', data.token);
+    return data;
+  },
+
+  resetPassword: async (dealerCode: string, email: string, newPassword: string) => {
+    const res = await fetch(`${API_BASE}/auth/reset-password/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dealer_code: dealerCode, email, new_password: newPassword }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || 'Password reset failed');
+    if (data.token) localStorage.setItem('dealerdesk_token', data.token);
+    return data;
+  },
+
+  getMe: async (): Promise<{ authenticated: boolean; dealer: Dealer | null; credit_limit?: string; outstanding_orders?: string; available_credit?: string }> => {
+    const token = localStorage.getItem('dealerdesk_token');
+    if (!token) return { authenticated: false, dealer: null };
+    try {
+      const res = await fetch(`${API_BASE}/auth/me/`, {
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        localStorage.removeItem('dealerdesk_token');
+        return { authenticated: false, dealer: null };
+      }
+      return res.json();
+    } catch {
+      return { authenticated: false, dealer: null };
+    }
+  },
+
+  logout: async () => {
+    try {
+      await fetch(`${API_BASE}/auth/logout/`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
+    } finally {
+      localStorage.removeItem('dealerdesk_token');
+    }
   },
 
   getProducts: async (params?: { search?: string; category?: string; vehicle?: string; page?: number; page_size?: number }): Promise<PaginatedResponse<Product>> => {
@@ -93,14 +174,16 @@ export const api = {
     if (params?.vehicle) q.set('vehicle', params.vehicle);
     if (params?.page) q.set('page', String(params.page));
     if (params?.page_size) q.set('page_size', String(params.page_size));
-    const res = await fetch(`${API_BASE}/products/?${q.toString()}`);
+    const res = await fetch(`${API_BASE}/products/?${q.toString()}`, {
+      headers: getAuthHeaders(),
+    });
     return res.json();
   },
 
   updateInventory: async (sku: string, quantity: number, reason: string = 'manual adjustment') => {
     const res = await fetch(`${API_BASE}/inventory/${sku}/`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ quantity, reason }),
     });
     if (!res.ok) throw new Error((await res.json())?.error?.message || 'Inventory update failed');
@@ -108,19 +191,34 @@ export const api = {
   },
 
   getDealers: async (page = 1, pageSize = 50): Promise<PaginatedResponse<Dealer>> => {
-    const res = await fetch(`${API_BASE}/dealers/?page=${page}&page_size=${pageSize}`);
+    const res = await fetch(`${API_BASE}/dealers/?page=${page}&page_size=${pageSize}`, {
+      headers: getAuthHeaders(),
+    });
     return res.json();
   },
 
-  getOrders: async (page = 1, pageSize = 20): Promise<PaginatedResponse<Order>> => {
-    const res = await fetch(`${API_BASE}/orders/?page=${page}&page_size=${pageSize}`);
+  getDealerDetail: async (id: number): Promise<Dealer & { available_credit?: string; outstanding_orders?: string }> => {
+    const res = await fetch(`${API_BASE}/dealers/${id}/`, {
+      headers: getAuthHeaders(),
+    });
+    return res.json();
+  },
+
+  getOrders: async (page = 1, pageSize = 20, dealerId?: number): Promise<PaginatedResponse<Order>> => {
+    const q = new URLSearchParams();
+    q.set('page', String(page));
+    q.set('page_size', String(pageSize));
+    if (dealerId) q.set('dealer_id', String(dealerId));
+    const res = await fetch(`${API_BASE}/orders/?${q.toString()}`, {
+      headers: getAuthHeaders(),
+    });
     return res.json();
   },
 
   createOrder: async (dealerId: number, items: Array<{ sku: string; quantity: number }>) => {
     const res = await fetch(`${API_BASE}/orders/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ dealer_id: dealerId, items }),
     });
     const data = await res.json();
@@ -129,7 +227,9 @@ export const api = {
   },
 
   getOrder: async (orderNumber: string): Promise<Order> => {
-    const res = await fetch(`${API_BASE}/orders/${orderNumber}/`);
+    const res = await fetch(`${API_BASE}/orders/${orderNumber}/`, {
+      headers: getAuthHeaders(),
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error?.message || 'Failed to fetch order');
     return data;
@@ -138,6 +238,7 @@ export const api = {
   confirmOrder: async (orderNumber: string): Promise<Order> => {
     const res = await fetch(`${API_BASE}/orders/${orderNumber}/confirm/`, {
       method: 'POST',
+      headers: getAuthHeaders(),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error?.message || 'Failed to confirm order');
@@ -147,6 +248,7 @@ export const api = {
   cancelOrder: async (orderNumber: string): Promise<Order> => {
     const res = await fetch(`${API_BASE}/orders/${orderNumber}/cancel/`, {
       method: 'POST',
+      headers: getAuthHeaders(),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error?.message || 'Failed to cancel order');
@@ -156,6 +258,7 @@ export const api = {
   dispatchOrder: async (orderNumber: string): Promise<Order> => {
     const res = await fetch(`${API_BASE}/orders/${orderNumber}/dispatch/`, {
       method: 'POST',
+      headers: getAuthHeaders(),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error?.message || 'Failed to dispatch order');
@@ -165,6 +268,7 @@ export const api = {
   deliverOrder: async (orderNumber: string): Promise<Order> => {
     const res = await fetch(`${API_BASE}/orders/${orderNumber}/deliver/`, {
       method: 'POST',
+      headers: getAuthHeaders(),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error?.message || 'Failed to deliver order');
@@ -172,19 +276,23 @@ export const api = {
   },
 
   getReorderSuggestions: async (): Promise<{ results: ReorderSuggestion[] }> => {
-    const res = await fetch(`${API_BASE}/reorder-suggestions/`);
+    const res = await fetch(`${API_BASE}/reorder-suggestions/`, {
+      headers: getAuthHeaders(),
+    });
     return res.json();
   },
 
   getForecast: async (sku: string): Promise<{ sku: string; forecast: ForecastWeek[] }> => {
-    const res = await fetch(`${API_BASE}/forecast/${sku}/`);
+    const res = await fetch(`${API_BASE}/forecast/${sku}/`, {
+      headers: getAuthHeaders(),
+    });
     return res.json();
   },
 
   chatAssistant: async (sessionId: string, dealerId: number, message: string): Promise<AssistantResponse> => {
     const res = await fetch(`${API_BASE}/assistant/chat/`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ session_id: sessionId, dealer_id: dealerId, message }),
     });
     const data = await res.json();
@@ -192,4 +300,5 @@ export const api = {
     return data;
   },
 };
+
 

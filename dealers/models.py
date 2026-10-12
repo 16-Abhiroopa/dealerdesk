@@ -1,8 +1,16 @@
 from decimal import Decimal
+from django.conf import settings
 from django.db import models
 
 
 class Dealer(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="dealer",
+    )
     dealer_code = models.CharField(max_length=64, unique=True, db_index=True)
     name = models.CharField(max_length=255)
     city = models.CharField(max_length=100, blank=True, default="")

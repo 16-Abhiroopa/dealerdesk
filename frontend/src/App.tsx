@@ -24,7 +24,10 @@ import {
   Truck,
   Check,
   X,
-  UserCheck
+  UserCheck,
+  Key,
+  Lock,
+  LogOut
 } from 'lucide-react';
 import { 
   api, 
@@ -57,9 +60,21 @@ export default function App() {
   const [cart, setCart] = useState<Array<{ product: Product; quantity: number }>>([]);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   
-  // Dealers state
+  // Dealers and Auth state
   const [dealers, setDealers] = useState<Dealer[]>([]);
   const [selectedDealerId, setSelectedDealerId] = useState<number>(1);
+  const [dealerFinancials, setDealerFinancials] = useState<{ credit_limit?: string; outstanding_orders?: string; available_credit?: string }>({});
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [authTab, setAuthTab] = useState<'switch' | 'login' | 'provision' | 'reset'>('switch');
+  const [loginIdent, setLoginIdent] = useState<string>('');
+  const [loginPassword, setLoginPassword] = useState<string>('');
+  const [provCode, setProvCode] = useState<string>('');
+  const [provEmail, setProvEmail] = useState<string>('');
+  const [provPassword, setProvPassword] = useState<string>('');
+  const [resetCode, setResetCode] = useState<string>('');
+  const [resetEmail, setResetEmail] = useState<string>('');
+  const [resetNewPass, setResetNewPass] = useState<string>('');
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
   
   // Orders state
   const [orders, setOrders] = useState<Order[]>([]);
@@ -77,23 +92,16 @@ export default function App() {
   const [editingSku, setEditingSku] = useState<string | null>(null);
   const [editQty, setEditQty] = useState<number>(0);
   
-  // Assistant Chat State
-  const [sessionId] = useState<string>(() => `sess-${Math.random().toString(36).substring(2, 9)}`);
+  // Assistant Chat State (Scoped strictly per-dealer to prevent cross-dealer session collisions)
   const [assistantMode, setAssistantMode] = useState<string>('rule_based');
-  const [chatMessages, setChatMessages] = useState<Array<{ 
+  const [chatHistories, setChatHistories] = useState<Record<number, Array<{ 
     role: 'user' | 'assistant'; 
     text: string; 
     toolCalls?: any[]; 
     citedSkus?: string[]; 
     actions?: any[];
     mode?: string;
-  }>>([
-    {
-      role: 'assistant',
-      text: 'Hello! I am your DealerDesk Assistant (operating in tokenless local rule-based mode). I can search parts, check real-time stock and prices, verify order status, and prepare draft orders from live PostgreSQL data.',
-      mode: 'rule_based'
-    }
-  ]);
+  }>>>({});
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
 
@@ -133,15 +141,29 @@ export default function App() {
     }
   };
 
-  const loadDealers = async () => {
+  const refreshDealerFinancials = async (id: number) => {
     try {
-      const res = await api.getDealers();
-      setDealers(res.results || []);
-      if (res.results?.length && !selectedDealerId) {
-        setSelectedDealerId(res.results[0].id);
-      }
+      const data = await api.getDealerDetail(id);
+      setDealerFinancials({
+        credit_limit: data.credit_limit,
+        outstanding_orders: data.outstanding_orders,
+        available_credit: data.available_credit,
+      });
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const loadOrders = async (dealerId?: number) => {
+    setOrdersLoading(true);
+    try {
+      const targetId = dealerId || selectedDealerId;
+      const res = await api.getOrders(1, 50, targetId);
+      setOrders(res.results || []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setOrdersLoading(false);
     }
   };
 
@@ -149,11 +171,11 @@ export default function App() {
     setProductsLoading(true);
     try {
       const res = await api.getProducts({
-        search: searchQuery,
-        category: categoryFilter,
-        vehicle: vehicleFilter,
+        search: searchQuery || undefined,
+        category: categoryFilter || undefined,
+        vehicle: vehicleFilter || undefined,
         page,
-        page_size: 15,
+        page_size: 12,
       });
       setProducts(res.results || []);
       setProductCount(res.count || 0);
@@ -164,15 +186,29 @@ export default function App() {
     }
   };
 
-  const loadOrders = async () => {
-    setOrdersLoading(true);
+  const loadDealers = async () => {
     try {
-      const res = await api.getOrders(1, 50);
-      setOrders(res.results || []);
+      const res = await api.getDealers();
+      const list = res.results || [];
+      setDealers(list);
+
+      const me = await api.getMe();
+      if (me.authenticated && me.dealer) {
+        setSelectedDealerId(me.dealer.id);
+        setDealerFinancials({
+          credit_limit: me.credit_limit,
+          outstanding_orders: me.outstanding_orders,
+          available_credit: me.available_credit,
+        });
+        await loadOrders(me.dealer.id);
+      } else if (list.length) {
+        const initialId = list[0].id;
+        setSelectedDealerId(initialId);
+        await refreshDealerFinancials(initialId);
+        await loadOrders(initialId);
+      }
     } catch (err) {
       console.error(err);
-    } finally {
-      setOrdersLoading(false);
     }
   };
 
@@ -244,13 +280,19 @@ export default function App() {
 
   const handleCreateDraftOrder = async () => {
     if (cart.length === 0) return;
+    const avail = dealerFinancials.available_credit ? parseFloat(dealerFinancials.available_credit) : null;
+    if (avail !== null && avail > 0 && cartGrandTotal > avail) {
+      showNotification('error', `Cannot create draft: Grand total ₹${cartGrandTotal.toFixed(2)} exceeds available credit limit of ₹${avail.toFixed(2)}.`);
+      return;
+    }
     setIsSubmittingOrder(true);
     try {
       const itemsPayload = cart.map(item => ({ sku: item.product.sku, quantity: item.quantity }));
       const order = await api.createOrder(selectedDealerId, itemsPayload);
       showNotification('success', `Draft order ${order.order_number} created successfully! Grand Total: ₹${order.grand_total}`);
       setCart([]);
-      await loadOrders();
+      await loadOrders(selectedDealerId);
+      await refreshDealerFinancials(selectedDealerId);
       setActiveTab('orders');
     } catch (err: any) {
       showNotification('error', err.message || 'Failed to create draft order');
@@ -265,7 +307,7 @@ export default function App() {
     try {
       const confirmed = await api.confirmOrder(orderNumber);
       showNotification('success', `Order ${confirmed.order_number} CONFIRMED! Stock deducted atomically in PostgreSQL.`);
-      await Promise.all([loadOrders(), loadProducts(), loadReorders()]);
+      await Promise.all([loadOrders(selectedDealerId), loadProducts(), loadReorders(), refreshDealerFinancials(selectedDealerId)]);
     } catch (err: any) {
       showNotification('error', err.message || 'Failed to confirm order: Insufficient stock');
     } finally {
@@ -279,7 +321,7 @@ export default function App() {
     try {
       const cancelled = await api.cancelOrder(orderNumber);
       showNotification('success', `Order ${cancelled.order_number} CANCELLED. Inventory stock restored.`);
-      await Promise.all([loadOrders(), loadProducts(), loadReorders()]);
+      await Promise.all([loadOrders(selectedDealerId), loadProducts(), loadReorders(), refreshDealerFinancials(selectedDealerId)]);
     } catch (err: any) {
       showNotification('error', err.message || 'Failed to cancel order');
     } finally {
@@ -292,7 +334,7 @@ export default function App() {
     try {
       const dispatched = await api.dispatchOrder(orderNumber);
       showNotification('success', `Order ${dispatched.order_number} marked as DISPATCHED.`);
-      await loadOrders();
+      await loadOrders(selectedDealerId);
     } catch (err: any) {
       showNotification('error', err.message || 'Failed to dispatch order');
     } finally {
@@ -305,7 +347,7 @@ export default function App() {
     try {
       const delivered = await api.deliverOrder(orderNumber);
       showNotification('success', `Order ${delivered.order_number} marked as DELIVERED.`);
-      await loadOrders();
+      await loadOrders(selectedDealerId);
     } catch (err: any) {
       showNotification('error', err.message || 'Failed to deliver order');
     } finally {
@@ -325,38 +367,140 @@ export default function App() {
     }
   };
 
+  const handleQuickSwitch = async (dealer: Dealer) => {
+    setSelectedDealerId(dealer.id);
+    await refreshDealerFinancials(dealer.id);
+    await loadOrders(dealer.id);
+    showNotification('success', `Switched active dealer to ${dealer.name} (${dealer.dealer_code})`);
+    setAuthModalOpen(false);
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    try {
+      const res = await api.loginDealer(loginIdent, loginPassword);
+      showNotification('success', `Logged in as ${res.dealer.name} (${res.dealer.dealer_code})`);
+      setSelectedDealerId(res.dealer.id);
+      setDealerFinancials({
+        credit_limit: res.credit_limit,
+        outstanding_orders: res.outstanding_orders,
+        available_credit: res.available_credit,
+      });
+      await loadOrders(res.dealer.id);
+      setAuthModalOpen(false);
+      setLoginIdent('');
+      setLoginPassword('');
+    } catch (err: any) {
+      showNotification('error', err.message || 'Login failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleProvision = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    try {
+      const res = await api.provisionDealer(provCode, { email: provEmail }, provPassword);
+      showNotification('success', `Account provisioned for ${res.dealer.name} (${res.dealer.dealer_code})`);
+      setSelectedDealerId(res.dealer.id);
+      setDealerFinancials({
+        credit_limit: res.credit_limit,
+        outstanding_orders: res.outstanding_orders,
+        available_credit: res.available_credit,
+      });
+      await loadOrders(res.dealer.id);
+      setAuthModalOpen(false);
+      setProvCode('');
+      setProvEmail('');
+      setProvPassword('');
+    } catch (err: any) {
+      showNotification('error', err.message || 'Provisioning failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    try {
+      await api.resetPassword(resetCode, resetEmail, resetNewPass);
+      showNotification('success', 'Password reset successfully.');
+      setAuthModalOpen(false);
+      setResetCode('');
+      setResetEmail('');
+      setResetNewPass('');
+    } catch (err: any) {
+      showNotification('error', err.message || 'Password reset failed');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await api.logout();
+    showNotification('success', 'Logged out.');
+    const first = dealers[0];
+    if (first) {
+      setSelectedDealerId(first.id);
+      await refreshDealerFinancials(first.id);
+      await loadOrders(first.id);
+    }
+  };
+
   const handleSendChat = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!chatInput.trim() || chatLoading) return;
     
     const userMsg = chatInput.trim();
+    const dealerId = selectedDealerId;
+    const sessionId = `dealer-${dealerId}-chat`;
+    
     setChatInput('');
-    setChatMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setChatHistories(prev => ({
+      ...prev,
+      [dealerId]: [...(prev[dealerId] || [
+        {
+          role: 'assistant',
+          text: `Hello ${currentDealer?.name || 'Dealer'}! I am your DealerDesk Assistant (operating in tokenless local rule-based mode). I can search parts, check real-time stock and prices, verify order status, and prepare draft orders from live PostgreSQL data.`,
+          mode: 'rule_based'
+        }
+      ]), { role: 'user', text: userMsg }]
+    }));
     setChatLoading(true);
 
     try {
-      const resp: AssistantResponse = await api.chatAssistant(sessionId, selectedDealerId, userMsg);
+      const resp: AssistantResponse = await api.chatAssistant(sessionId, dealerId, userMsg);
       if (resp.mode) setAssistantMode(resp.mode);
-      setChatMessages(prev => [
+      setChatHistories(prev => ({
         ...prev,
-        {
-          role: 'assistant',
-          text: resp.reply,
-          toolCalls: resp.tool_calls,
-          citedSkus: resp.cited_skus,
-          actions: resp.actions,
-          mode: resp.mode,
-        }
-      ]);
+        [dealerId]: [
+          ...(prev[dealerId] || []),
+          {
+            role: 'assistant',
+            text: resp.reply,
+            toolCalls: resp.tool_calls,
+            citedSkus: resp.cited_skus,
+            actions: resp.actions,
+            mode: resp.mode,
+          }
+        ]
+      }));
       if (resp.actions?.some(a => a.type === 'draft_order_created')) {
         showNotification('success', 'AI Assistant created a new draft order!');
-        await loadOrders();
+        await loadOrders(dealerId);
+        await refreshDealerFinancials(dealerId);
       }
     } catch (err: any) {
-      setChatMessages(prev => [
+      setChatHistories(prev => ({
         ...prev,
-        { role: 'assistant', text: `Error: ${err.message || 'Assistant request failed'}` }
-      ]);
+        [dealerId]: [
+          ...(prev[dealerId] || []),
+          { role: 'assistant', text: `Error: ${err.message || 'Assistant request failed'}` }
+        ]
+      }));
     } finally {
       setChatLoading(false);
     }
@@ -434,7 +578,12 @@ export default function App() {
           </div>
           <select 
             value={selectedDealerId} 
-            onChange={e => setSelectedDealerId(Number(e.target.value))}
+            onChange={e => {
+              const id = Number(e.target.value);
+              setSelectedDealerId(id);
+              refreshDealerFinancials(id);
+              loadOrders(id);
+            }}
             className="input-field"
             style={{ width: '100%', fontSize: '0.82rem', padding: '8px 10px' }}
           >
@@ -444,6 +593,27 @@ export default function App() {
               </option>
             ))}
           </select>
+          <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            <span>Available Credit:</span>
+            <span className="font-mono" style={{ color: 'var(--accent-emerald)', fontWeight: 700 }}>
+              ₹{dealerFinancials.available_credit || '0.00'}
+            </span>
+          </div>
+          <button
+            onClick={() => setAuthModalOpen(true)}
+            className="btn-secondary"
+            style={{ marginTop: 10, width: '100%', padding: '6px 10px', fontSize: '0.78rem', justifyContent: 'center', gap: 6 }}
+          >
+            <Key size={13} /> Manage Login & Auth
+          </button>
+          <button
+            onClick={handleLogout}
+            className="btn-secondary"
+            style={{ marginTop: 6, width: '100%', padding: '5px 10px', fontSize: '0.75rem', justifyContent: 'center', gap: 6, opacity: 0.8 }}
+            title="Log out and reset active session"
+          >
+            <LogOut size={12} /> Log Out Session
+          </button>
         </div>
 
         {/* Navigation */}
@@ -565,11 +735,31 @@ export default function App() {
               </span>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: 20, border: '1px solid var(--border-color)' }}>
+            <div 
+              onClick={() => setAuthModalOpen(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '6px 14px',
+                background: 'rgba(255,255,255,0.04)',
+                borderRadius: 20,
+                border: '1px solid var(--border-color)',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease'
+              }}
+              title="Click to manage dealer authentication or switch dealer"
+            >
               <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 700 }}>
                 {currentDealer ? currentDealer.dealer_code.substring(0, 2) : 'VK'}
               </div>
-              <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{currentDealer?.name || 'Verified Dealer'}</span>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#fff' }}>{currentDealer?.name || 'Verified Dealer'}</span>
+                <span style={{ fontSize: '0.68rem', color: 'var(--accent-emerald)' }}>
+                  Credit: ₹{dealerFinancials.available_credit || '0.00'} Avail
+                </span>
+              </div>
+              <Key size={13} color="var(--accent-cyan)" />
             </div>
           </div>
         </header>
@@ -921,9 +1111,14 @@ export default function App() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Subtotal: ₹{cartSubtotal.toFixed(2)} + 18% GST: ₹{cartTax.toFixed(2)}</div>
-                      <div className="font-mono" style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
+                      <div className="font-mono" style={{ fontSize: '1.15rem', fontWeight: 800, color: (dealerFinancials.available_credit && cartGrandTotal > parseFloat(dealerFinancials.available_credit)) ? '#f43f5e' : 'var(--accent-emerald)' }}>
                         Total: ₹{cartGrandTotal.toFixed(2)}
                       </div>
+                      {dealerFinancials.available_credit && cartGrandTotal > parseFloat(dealerFinancials.available_credit) && (
+                        <div style={{ fontSize: '0.72rem', color: '#f43f5e', fontWeight: 700, marginTop: 2 }}>
+                          ⚠️ Exceeds Available Credit (₹{dealerFinancials.available_credit})
+                        </div>
+                      )}
                     </div>
 
                     <button 
@@ -1018,12 +1213,37 @@ export default function App() {
                   </div>
                   
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <button onClick={loadOrders} className="btn-secondary" style={{ padding: '8px 12px' }}>
+                    <button onClick={() => { loadOrders(selectedDealerId); refreshDealerFinancials(selectedDealerId); }} className="btn-secondary" style={{ padding: '8px 12px' }}>
                       <RefreshCw size={14} className={ordersLoading ? 'animate-spin' : ''} /> Refresh
                     </button>
                     <button onClick={() => setActiveTab('catalogue')} className="btn-primary">
                       + Create New Order
                     </button>
+                  </div>
+                </div>
+
+                {/* Dealer Credit & Financial Summary Card */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
+                  <div style={{ padding: '16px 20px', borderRadius: 12, background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.25)' }}>
+                    <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 700 }}>Dealership Credit Limit</div>
+                    <div className="font-mono" style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fff', marginTop: 4 }}>
+                      ₹{dealerFinancials.credit_limit || '0.00'}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>Total authorized revolving limit</div>
+                  </div>
+                  <div style={{ padding: '16px 20px', borderRadius: 12, background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+                    <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 700 }}>Outstanding Active Orders</div>
+                    <div className="font-mono" style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-amber)', marginTop: 4 }}>
+                      ₹{dealerFinancials.outstanding_orders || '0.00'}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>Confirmed & Dispatched orders in transit</div>
+                  </div>
+                  <div style={{ padding: '16px 20px', borderRadius: 12, background: 'rgba(16, 185, 129, 0.08)', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+                    <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', color: 'var(--text-dim)', fontWeight: 700 }}>Remaining Available Credit</div>
+                    <div className="font-mono" style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: 4 }}>
+                      ₹{dealerFinancials.available_credit || '0.00'}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--accent-emerald)', marginTop: 4 }}>Available for new draft order confirmations</div>
                   </div>
                 </div>
 
@@ -1290,7 +1510,7 @@ export default function App() {
                     <div>
                       <h3 style={{ fontSize: '0.95rem', fontWeight: 700 }}>DealerDesk Autonomous Ordering Agent</h3>
                       <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
-                        Session: {sessionId} · Dealer: {currentDealer?.dealer_code}
+                        Session: dealer-{selectedDealerId}-chat · Dealer: {currentDealer?.dealer_code} ({currentDealer?.name})
                       </p>
                     </div>
                   </div>
@@ -1301,7 +1521,13 @@ export default function App() {
 
                 {/* Message History */}
                 <div style={{ flex: 1, padding: 20, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  {chatMessages.map((msg, idx) => (
+                  {(chatHistories[selectedDealerId] || [
+                    {
+                      role: 'assistant',
+                      text: `Hello ${currentDealer?.name || 'Dealer'}! I am your DealerDesk Assistant (operating in tokenless local rule-based mode). I can search parts, check real-time stock and prices, verify order status, and prepare draft orders from live PostgreSQL data.`,
+                      mode: 'rule_based'
+                    }
+                  ]).map((msg, idx) => (
                     <div
                       key={idx}
                       style={{
@@ -1528,6 +1754,265 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Dealer Authentication & Provisioning Modal */}
+      {authModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+          <div className="glass-panel" style={{ width: 620, maxHeight: '88vh', display: 'flex', flexDirection: 'column', borderRadius: 16, overflow: 'hidden' }}>
+            {/* Modal Header */}
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg, #6366f1, #06b6d4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Key size={18} color="#fff" />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff' }}>Dealer Account & Authentication</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Secure access for the 25 verified dealerships</p>
+                </div>
+              </div>
+              <button onClick={() => setAuthModalOpen(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Modal Tabs */}
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', background: 'rgba(0,0,0,0.2)' }}>
+              {[
+                { id: 'switch', label: 'Quick Switch (25 Dealers)' },
+                { id: 'login', label: 'Password Login' },
+                { id: 'provision', label: 'Provision Account' },
+                { id: 'reset', label: 'Reset Password' },
+              ].map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setAuthTab(t.id as any)}
+                  style={{
+                    flex: 1,
+                    padding: '12px 14px',
+                    border: 'none',
+                    background: authTab === t.id ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
+                    borderBottom: `2px solid ${authTab === t.id ? 'var(--primary)' : 'transparent'}`,
+                    color: authTab === t.id ? '#fff' : 'var(--text-muted)',
+                    fontSize: '0.8rem',
+                    fontWeight: authTab === t.id ? 700 : 500,
+                    cursor: 'pointer'
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: 24, overflowY: 'auto', flex: 1 }}>
+              {/* TAB 1: QUICK SWITCH */}
+              {authTab === 'switch' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 4 }}>
+                    Select any of the 25 verified dealer records to inspect separate sessions, private orders, and isolated AI Assistant threads:
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto', paddingRight: 4 }}>
+                    {dealers.map(d => (
+                      <div
+                        key={d.id}
+                        onClick={() => handleQuickSwitch(d)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '10px 14px',
+                          borderRadius: 10,
+                          background: selectedDealerId === d.id ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255,255,255,0.03)',
+                          border: `1px solid ${selectedDealerId === d.id ? 'var(--primary)' : 'var(--border-color)'}`,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <span className="badge badge-indigo font-mono" style={{ fontSize: '0.75rem', fontWeight: 700 }}>
+                            {d.dealer_code}
+                          </span>
+                          <div>
+                            <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff' }}>{d.name}</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>{d.city} · GSTIN: {d.gstin}</div>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <span className="badge badge-emerald font-mono" style={{ fontSize: '0.75rem' }}>
+                            Limit: ₹{d.credit_limit}
+                          </span>
+                          {selectedDealerId === d.id && (
+                            <div style={{ fontSize: '0.7rem', color: 'var(--accent-cyan)', fontWeight: 700, marginTop: 2 }}>
+                              Active Now
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: PASSWORD LOGIN */}
+              {authTab === 'login' && (
+                <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                    Authenticate with secure Django credentials linked to your dealership record:
+                  </p>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'block', marginBottom: 6 }}>
+                      Dealer Code or Username (e.g. DLR-001 or dlr-001)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. DLR-001"
+                      value={loginIdent}
+                      onChange={e => setLoginIdent(e.target.value)}
+                      className="input-field"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'block', marginBottom: 6 }}>
+                      Password
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="Enter dealer password"
+                      value={loginPassword}
+                      onChange={e => setLoginPassword(e.target.value)}
+                      className="input-field"
+                      style={{ width: '100%' }}
+                    />
+                    <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                      Initial seed password format: <code>DealerPass@&lt;DEALER_CODE&gt;!</code> (e.g. <code>DealerPass@DLR-001!</code>)
+                    </p>
+                  </div>
+                  <button type="submit" disabled={authLoading} className="btn-primary" style={{ marginTop: 8, justifyContent: 'center' }}>
+                    {authLoading ? <RefreshCw size={16} className="animate-spin" /> : <Lock size={16} />}
+                    Log In to Dealership
+                  </button>
+                </form>
+              )}
+
+              {/* TAB 3: PROVISION ACCOUNT */}
+              {authTab === 'provision' && (
+                <form onSubmit={handleProvision} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                    Provision or activate an account by verifying dealer identity against the database:
+                  </p>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'block', marginBottom: 6 }}>
+                      Dealer Code (e.g. DLR-001)
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. DLR-001"
+                      value={provCode}
+                      onChange={e => setProvCode(e.target.value)}
+                      className="input-field"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'block', marginBottom: 6 }}>
+                      Registered Dealer Email (from records, e.g. orders@abcmotors.in)
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="e.g. orders@abcmotors.in"
+                      value={provEmail}
+                      onChange={e => setProvEmail(e.target.value)}
+                      className="input-field"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'block', marginBottom: 6 }}>
+                      New Secure Password (minimum 6 characters)
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      placeholder="Choose new password"
+                      value={provPassword}
+                      onChange={e => setProvPassword(e.target.value)}
+                      className="input-field"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <button type="submit" disabled={authLoading} className="btn-primary" style={{ marginTop: 8, justifyContent: 'center' }}>
+                    {authLoading ? <RefreshCw size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                    Verify & Provision Dealer Account
+                  </button>
+                </form>
+              )}
+
+              {/* TAB 4: RESET PASSWORD */}
+              {authTab === 'reset' && (
+                <form onSubmit={handleResetPassword} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                    Reset your dealer password with registered email verification:
+                  </p>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'block', marginBottom: 6 }}>
+                      Dealer Code
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. DLR-002"
+                      value={resetCode}
+                      onChange={e => setResetCode(e.target.value)}
+                      className="input-field"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'block', marginBottom: 6 }}>
+                      Registered Email
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="e.g. orders@speedwayautoparts.in"
+                      value={resetEmail}
+                      onChange={e => setResetEmail(e.target.value)}
+                      className="input-field"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: 'var(--text-dim)', display: 'block', marginBottom: 6 }}>
+                      New Password
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      placeholder="Enter new password"
+                      value={resetNewPass}
+                      onChange={e => setResetNewPass(e.target.value)}
+                      className="input-field"
+                      style={{ width: '100%' }}
+                    />
+                  </div>
+                  <button type="submit" disabled={authLoading} className="btn-primary" style={{ marginTop: 8, justifyContent: 'center' }}>
+                    {authLoading ? <RefreshCw size={16} className="animate-spin" /> : <Key size={16} />}
+                    Update & Reset Password
+                  </button>
+                </form>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
