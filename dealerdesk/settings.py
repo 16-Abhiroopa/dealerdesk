@@ -68,10 +68,64 @@ TEMPLATES = [
 WSGI_APPLICATION = "dealerdesk.wsgi.application"
 
 # ---- Database: PostgreSQL only -------------------------------------------------------
-DATABASE_URL = (os.environ.get("DATABASE_URL") or "").strip()
-if not DATABASE_URL:
+raw_db_url = (os.environ.get("DATABASE_URL") or "").strip()
+
+# Strip any surrounding quotes (e.g. from .env or shell quotes)
+if (raw_db_url.startswith('"') and raw_db_url.endswith('"')) or (raw_db_url.startswith("'") and raw_db_url.endswith("'")):
+    raw_db_url = raw_db_url[1:-1].strip()
+
+# Auto-repair typo/copy-paste issue where leading 'p' was accidentally dropped
+if raw_db_url.startswith("ostgresql://"):
+    raw_db_url = "p" + raw_db_url
+elif raw_db_url.startswith("ostgres://"):
+    raw_db_url = "p" + raw_db_url
+
+# Fallback: if DB_NAME or POSTGRES_DB was mistakenly set to a connection URL
+if not raw_db_url:
+    alt_url = (os.environ.get("DB_NAME") or os.environ.get("POSTGRES_DB") or "").strip()
+    if alt_url.startswith(("postgres://", "postgresql://", "ostgresql://", "ostgres://")):
+        raw_db_url = alt_url
+        if raw_db_url.startswith("ostgresql://"):
+            raw_db_url = "p" + raw_db_url
+        elif raw_db_url.startswith("ostgres://"):
+            raw_db_url = "p" + raw_db_url
+
+if not raw_db_url:
     raise ImproperlyConfigured("Set DATABASE_URL to a PostgreSQL URL, e.g. postgres://user:pass@localhost:5432/dealerdesk")
-DATABASES = {"default": dj_database_url.parse(DATABASE_URL, conn_max_age=0)}
+
+parsed_db = dj_database_url.parse(
+    raw_db_url,
+    conn_max_age=600 if not DEBUG else 0,
+    conn_health_checks=True,
+)
+
+# Safety check: ensure NAME is not accidentally the raw URL string
+if parsed_db.get("NAME") and parsed_db["NAME"].startswith(("postgres://", "postgresql://", "ostgresql://", "ostgres://")):
+    inner_url = parsed_db["NAME"]
+    if inner_url.startswith("ostgresql://") or inner_url.startswith("ostgres://"):
+        inner_url = "p" + inner_url
+    parsed_db = dj_database_url.parse(inner_url)
+
+db_name = parsed_db.get("NAME") or "dealerdesk"
+if len(db_name) > 63:
+    raise ImproperlyConfigured(
+        f"The database name '{db_name}' exceeds PostgreSQL's limit of 63 characters. Supply a valid database name or connection URL."
+    )
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": db_name,
+        "USER": parsed_db.get("USER", ""),
+        "PASSWORD": parsed_db.get("PASSWORD", ""),
+        "HOST": parsed_db.get("HOST", ""),
+        "PORT": parsed_db.get("PORT", ""),
+        "CONN_MAX_AGE": parsed_db.get("CONN_MAX_AGE", 0),
+        "CONN_HEALTH_CHECKS": parsed_db.get("CONN_HEALTH_CHECKS", True),
+        "OPTIONS": parsed_db.get("OPTIONS", {}),
+    }
+}
+
 if DATABASES["default"]["ENGINE"] != "django.db.backends.postgresql":
     raise ImproperlyConfigured("DealerDesk requires PostgreSQL. SQLite can't test the concurrency rules.")
 
