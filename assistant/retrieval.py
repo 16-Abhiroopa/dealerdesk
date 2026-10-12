@@ -210,6 +210,11 @@ def search_catalogue(
         if score > 0:
             scored_products.append((score, p))
 
+    # Fallback for broad browsing queries (e.g. 'all', 'available products', 'catalogue')
+    if not scored_products and (not query or any(w in query.lower() for w in ["all", "list", "available", "product", "part", "catalogue"])):
+        for prod in qs.filter(inventory__quantity__gt=0).order_by("-inventory__quantity")[:top_k]:
+            scored_products.append((1.0, prod))
+
     # Sort descending by score, tiebreak by stock
     scored_products.sort(key=lambda item: (item[0], item[1].stock), reverse=True)
 

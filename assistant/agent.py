@@ -51,7 +51,7 @@ SECURITY & UNTRUSTED DATA:
 SKU_PATTERN = re.compile(r"\b([A-Z]{3}-\d{4})\b")
 PRICE_PATTERN = re.compile(r"(?:₹|INR)\s*([\d,]+(?:\.\d+)?)|(?<![\w.])([\d,]+\.\d{2})(?!\w)", re.IGNORECASE)
 STOCK_PATTERNS = (
-    re.compile(r"\b(?:stock|available|availability|inventory|left|remaining)\D{0,16}([\d,]+)\b", re.IGNORECASE),
+    re.compile(r"\b(?:stock|available|availability|inventory|left|remaining)\s*(?::|is|are|of|-)?\s*([\d,]+)\b", re.IGNORECASE),
     re.compile(r"\b([\d,]+)\s+(?:units?|pieces?|sets?)\b", re.IGNORECASE),
     re.compile(r"\b([\d,]+)\s+(?:are\s+)?(?:in stock|available)\b", re.IGNORECASE),
 )
@@ -184,6 +184,26 @@ def run_assistant_turn(session_id: str, dealer_id: int, user_message: str) -> Di
                     for field in ("subtotal", "tax_total", "grand_total"):
                         if tool_result.get(field) is not None:
                             grounded_prices.add(_money_key(tool_result[field]))
+
+            if tool_result.get("short_lines"):
+                for s in tool_result["short_lines"]:
+                    if s.get("sku"):
+                        grounded_skus.add(s["sku"])
+                    if s.get("available") is not None:
+                        grounded_stocks.add(int(s["available"]))
+                    if s.get("requested") is not None:
+                        grounded_stocks.add(int(s["requested"]))
+
+            if tc_name == "get_order_status":
+                if tool_result.get("grand_total") is not None:
+                    grounded_prices.add(_money_key(tool_result["grand_total"]))
+                if tool_result.get("items_count") is not None:
+                    grounded_stocks.add(int(tool_result["items_count"]))
+                for rec in tool_result.get("recent_orders", []):
+                    if rec.get("grand_total") is not None:
+                        grounded_prices.add(_money_key(rec["grand_total"]))
+                    if rec.get("items_count") is not None:
+                        grounded_stocks.add(int(rec["items_count"]))
 
             tool_content_str = json.dumps(tool_result)
             tool_call_dicts.append({

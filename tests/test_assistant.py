@@ -155,3 +155,100 @@ def test_assistant_session_isolation():
     # Must ask which product rather than creating draft for FIL-9999
     assert resB.json()["actions"] == []
     assert "which" in resB.json()["reply"].lower() or "product" in resB.json()["reply"].lower()
+
+
+@pytest.mark.django_db
+def test_tokenless_assistant_order_status_check():
+    client = APIClient()
+    dealer = Dealer.objects.create(dealer_code="DLR-ORD-STATUS", name="Dealer Status Test")
+    p = Product.objects.create(
+        sku="OIL-2001",
+        name="Engine Oil 10W-40",
+        category="Engine & Oils",
+        brand="Motul",
+        vehicle_fitment="Universal",
+        price="850.00",
+    )
+    Inventory.objects.create(product=p, quantity=20)
+
+    # Create a draft order
+    from orders.services import create_draft_order
+    order, _ = create_draft_order(dealer_id=dealer.id, items_data=[{"sku": "OIL-2001", "quantity": 2}])
+
+    # Ask assistant for status of this order
+    res = client.post(
+        "/api/assistant/chat/",
+        {
+            "session_id": "sess-order-status",
+            "dealer_id": dealer.id,
+            "message": f"What is the status of my order {order.order_number}?",
+        },
+        format="json",
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert order.order_number in data["reply"]
+    assert "DRAFT" in data["reply"]
+    assert any(tc["name"] == "get_order_status" for tc in data["tool_calls"])
+
+
+@pytest.mark.django_db
+def test_tokenless_assistant_insufficient_stock_explanation():
+    client = APIClient()
+    dealer = Dealer.objects.create(dealer_code="DLR-SHORT", name="Shortage Test Dealer")
+    p = Product.objects.create(
+        sku="TST-8888",
+        name="Tubeless Tyre 90/90-12",
+        category="Tyres & Tubes",
+        brand="MRF",
+        vehicle_fitment="Universal",
+        price="1200.00",
+    )
+    Inventory.objects.create(product=p, quantity=3)
+
+    # Dealer asks to order 10 units when only 3 are in stock
+    res = client.post(
+        "/api/assistant/chat/",
+        {
+            "session_id": "sess-shortage",
+            "dealer_id": dealer.id,
+            "message": "Order 10 units of TST-8888",
+        },
+        format="json",
+    )
+    assert res.status_code == 200
+    data = res.json()
+    # Must NOT create an order action
+    assert data["actions"] == []
+    # Must explain insufficient stock
+    assert "stock" in data["reply"].lower() or "cannot create" in data["reply"].lower()
+
+
+@pytest.mark.django_db
+def test_tokenless_assistant_missing_order_quantity_prompts_clarification():
+    client = APIClient()
+    dealer = Dealer.objects.create(dealer_code="DLR-CLARIFY", name="Clarify Dealer")
+    p = Product.objects.create(
+        sku="ACC-5555",
+        name="Handlebar Grip Set",
+        category="Controls & Grips",
+        brand="ProGrip",
+        vehicle_fitment="Universal",
+        price="350.00",
+    )
+    Inventory.objects.create(product=p, quantity=25)
+
+    # Prompt: "I want to place an order" without product or quantity
+    res = client.post(
+        "/api/assistant/chat/",
+        {
+            "session_id": "sess-clarify",
+            "dealer_id": dealer.id,
+            "message": "I want to place an order",
+        },
+        format="json",
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["actions"] == []
+    assert "sku" in data["reply"].lower() or "product" in data["reply"].lower()

@@ -75,6 +75,7 @@ export interface AssistantResponse {
     type: string;
     order_number?: string;
   }>;
+  mode?: string;
 }
 
 const API_BASE = '/api';
@@ -127,6 +128,49 @@ export const api = {
     return data;
   },
 
+  getOrder: async (orderNumber: string): Promise<Order> => {
+    const res = await fetch(`${API_BASE}/orders/${orderNumber}/`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || 'Failed to fetch order');
+    return data;
+  },
+
+  confirmOrder: async (orderNumber: string): Promise<Order> => {
+    const res = await fetch(`${API_BASE}/orders/${orderNumber}/confirm/`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || 'Failed to confirm order');
+    return data;
+  },
+
+  cancelOrder: async (orderNumber: string): Promise<Order> => {
+    const res = await fetch(`${API_BASE}/orders/${orderNumber}/cancel/`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || 'Failed to cancel order');
+    return data;
+  },
+
+  dispatchOrder: async (orderNumber: string): Promise<Order> => {
+    const res = await fetch(`${API_BASE}/orders/${orderNumber}/dispatch/`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || 'Failed to dispatch order');
+    return data;
+  },
+
+  deliverOrder: async (orderNumber: string): Promise<Order> => {
+    const res = await fetch(`${API_BASE}/orders/${orderNumber}/deliver/`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error?.message || 'Failed to deliver order');
+    return data;
+  },
+
   getReorderSuggestions: async (): Promise<{ results: ReorderSuggestion[] }> => {
     const res = await fetch(`${API_BASE}/reorder-suggestions/`);
     return res.json();
@@ -148,3 +192,4 @@ export const api = {
     return data;
   },
 };
+

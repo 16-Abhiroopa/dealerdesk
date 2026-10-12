@@ -371,6 +371,12 @@ class MockLLMAdapter(BaseLLMAdapter):
             if tool_name == "create_draft_order":
                 try:
                     res_json = json.loads(tool_content)
+                    if "error" in res_json:
+                        short_lines = res_json.get("short_lines", [])
+                        if short_lines:
+                            desc = ", ".join(f"{s['name']} ({s['sku']}) has only {s['available']} units in stock (requested {s['requested']})" for s in short_lines)
+                            return LLMResponse(content=f"Cannot create draft order: Requested quantity exceeds available stock. {desc}.")
+                        return LLMResponse(content=f"Cannot create draft order: {res_json['error']}")
                     ord_no = res_json.get("order_number", "")
                     gt = res_json.get("grand_total", "")
                     return LLMResponse(
@@ -378,6 +384,23 @@ class MockLLMAdapter(BaseLLMAdapter):
                     )
                 except Exception:
                     return LLMResponse(content=f"Order response: {tool_content}")
+
+            if tool_name == "get_order_status":
+                try:
+                    res_json = json.loads(tool_content)
+                    if "error" in res_json:
+                        return LLMResponse(content=f"Order status check: {res_json['error']}")
+                    if "order_number" in res_json:
+                        return LLMResponse(
+                            content=f"Order {res_json['order_number']} is currently in {res_json['status']} status with {res_json['items_count']} items, grand total ₹{res_json['grand_total']}."
+                        )
+                    recent = res_json.get("recent_orders", [])
+                    if not recent:
+                        return LLMResponse(content="You have no recorded orders at this time.")
+                    summary = "; ".join(f"{o['order_number']} ({o['status']}, ₹{o['grand_total']})" for o in recent[:3])
+                    return LLMResponse(content=f"Here are your latest dealership orders: {summary}.")
+                except Exception:
+                    return LLMResponse(content=f"Order status info: {tool_content}")
 
             if tool_name == "check_stock":
                 try:
@@ -435,6 +458,17 @@ class MockLLMAdapter(BaseLLMAdapter):
                     content="Which vehicle model do you need brake pads for? (e.g., KTM Duke 390, Bajaj Pulsar 150)"
                 )
 
+        # Check for order status intent: e.g. "what is the status of ORD-20261011-0001", "check my recent orders"
+        ord_pattern = re.search(r"\bORD-\d{8}-\d{4}\b", user_text.upper())
+        if ord_pattern or any(w in lower for w in ["order status", "my order", "my orders", "status of order", "recent order"]):
+            return LLMResponse(
+                tool_calls=[{
+                    "id": "call_order_status",
+                    "name": "get_order_status",
+                    "arguments": {"order_number": ord_pattern.group(0) if ord_pattern else None},
+                }]
+            )
+
         # Check for order creation intent: e.g. "put 10 aside for me", "order 5 units of BRK-1044"
         sku_match = re.search(r"\b[A-Z]{3}-\d{4}\b", user_text.upper())
         qty_match = re.search(r"\b(?:order|put|reserve|aside|need|take)\s+(\d+)", lower) or re.search(r"(\d+)\s+(?:units|pieces|sets|items)", lower)
@@ -459,6 +493,12 @@ class MockLLMAdapter(BaseLLMAdapter):
                 }]
             )
 
+        # Incomplete order intent: e.g. "I want to place an order", "buy some parts", or general "order" without sku
+        if any(w in lower for w in ["draft order", "place order", "place an order", "want to order", "create order", "buy parts", "make an order"]) or ("order" in lower and not sku_match and not qty_match):
+            return LLMResponse(content="Which product SKU and how many units would you like to include in this draft order?")
+        if sku_match and not qty_match and any(w in lower for w in ["order", "put aside", "draft"]):
+            return LLMResponse(content=f"How many units of {sku_match.group(0)} would you like to draft?")
+
         if ("order" in lower or "put" in lower) and sku_match:
             sku = sku_match.group(0)
             qty = int(qty_match.group(1)) if qty_match else 1
@@ -470,14 +510,24 @@ class MockLLMAdapter(BaseLLMAdapter):
                 }]
             )
 
-        # Check for stock check intent: "how many in stock", "check stock of BRK-1044"
-        if ("stock" in lower or "how many" in lower or "price" in lower) and sku_match:
+        # Check for stock or price check intent: "how many in stock", "check stock of BRK-1044", "price of ACC-1001"
+        if ("stock" in lower or "how many" in lower or "price" in lower or "cost" in lower or "how much" in lower) and sku_match:
             sku = sku_match.group(0)
             return LLMResponse(
                 tool_calls=[{
                     "id": "call_check_stock",
                     "name": "check_stock",
                     "arguments": {"sku": sku},
+                }]
+            )
+
+        # Broad browsing intent: "what products do you have", "show catalogue", "list available products"
+        if any(w in lower for w in ["list products", "available products", "catalogue", "what products", "show products", "what parts"]):
+            return LLMResponse(
+                tool_calls=[{
+                    "id": "call_search_parts",
+                    "name": "search_parts",
+                    "arguments": {"query": "filter", "category": "Filters"},
                 }]
             )
 

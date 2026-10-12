@@ -8,6 +8,7 @@ Tools:
 from typing import Dict, Any, List, Optional, Tuple
 from core.utils import format_money
 from products.models import Product
+from orders.models import Order
 from orders import services
 from assistant.retrieval import search_catalogue
 
@@ -75,6 +76,19 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["items"],
+        },
+    },
+    {
+        "name": "get_order_status",
+        "description": "Check the status of a specific order or list recent orders for the dealer.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "order_number": {
+                    "type": "string",
+                    "description": "The order number to check (e.g. 'ORD-20261011-0001'). If omitted, returns recent orders.",
+                },
+            },
         },
     },
 ]
@@ -160,6 +174,37 @@ def execute_tool(
                 "grand_total": format_money(order.grand_total),
                 "message": f"Draft order {order.order_number} created successfully.",
             }, action
+
+        elif name == "get_order_status":
+            order_number = (arguments.get("order_number") or "").strip()
+            if order_number:
+                order = Order.objects.filter(order_number=order_number, dealer_id=dealer_id).first()
+                if not order:
+                    return {"error": f"Order '{order_number}' not found for your dealership."}, None
+                return {
+                    "order_number": order.order_number,
+                    "status": order.status,
+                    "subtotal": format_money(order.subtotal),
+                    "tax_total": format_money(order.tax_total),
+                    "grand_total": format_money(order.grand_total),
+                    "items_count": order.items.count(),
+                    "created_at": order.created_at.strftime("%Y-%m-%d %H:%M"),
+                }, None
+            else:
+                recent = list(Order.objects.filter(dealer_id=dealer_id).order_by("-created_at")[:5])
+                if not recent:
+                    return {"message": "You do not have any orders recorded yet.", "recent_orders": []}, None
+                return {
+                    "recent_orders": [
+                        {
+                            "order_number": o.order_number,
+                            "status": o.status,
+                            "grand_total": format_money(o.grand_total),
+                            "items_count": o.items.count(),
+                        }
+                        for o in recent
+                    ]
+                }, None
 
         else:
             return {"error": f"Unknown tool: '{name}'"}, None
