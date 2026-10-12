@@ -87,8 +87,8 @@ User Message
 
 - **Code Citations**:
   - Turn entry point: [`run_assistant_turn()` in `assistant/agent.py:L85`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/assistant/agent.py#L85)
-  - Tool schemas: [`TOOL_DEFINITIONS` in `assistant/tools.py:L15`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/assistant/tools.py#L15)
-  - Tool executor: [`execute_tool()` in `assistant/tools.py:L83`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/assistant/tools.py#L83)
+  - Tool schemas: [`TOOL_DEFINITIONS` in `assistant/tools.py:L16`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/assistant/tools.py#L16)
+  - Tool executor: [`execute_tool()` in `assistant/tools.py:L97`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/assistant/tools.py#L97)
 
 ---
 
@@ -127,7 +127,7 @@ To guarantee zero hallucinations of prices or inventory numbers:
 
 ### Multi-Layered Defense Architecture:
 1. **Index Exclusion (Input Defense)**:
-   In [`assistant/retrieval.py:L185`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/assistant/retrieval.py#L185), search strings are composed exclusively of trusted schema fields:
+   In [`assistant/retrieval.py:L186`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/assistant/retrieval.py#L186), search strings are composed exclusively of trusted schema fields:
    `searchable_text = f"{p.name} {p.brand} {p.category} {p.vehicle_fitment}"`
    Untrusted supplier `description` fields are strictly excluded from search corpus indexing.
 2. **System Prompt Framing**:
@@ -135,7 +135,7 @@ To guarantee zero hallucinations of prices or inventory numbers:
 3. **Capability Boundary**:
    The assistant has no tool to confirm orders. The only order action available is `create_draft_order`. Confirmation requires manual dealer confirmation through `POST /api/orders/{order_number}/confirm/`.
 4. **Post-Generation Injection Scrubber**:
-   In [`assistant/agent.py:L210-L212`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/assistant/agent.py#L210-L212), regex filters intercept and neutralize claims of discounts or confirmation claims.
+   In [`assistant/agent.py:L230-L231`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/assistant/agent.py#L230-L231), regex filters intercept and neutralize claims of discounts or confirmation claims.
 
 ### Where the Defense Stops:
 If a supplier embeds malicious injection instructions within the `name` field itself using adversarial jailbreaks (e.g. Unicode steganography or zero-width spaces), the token overlap filter will process those tokens. Defending against that requires input sanitation prior to database ingestion.
@@ -154,7 +154,7 @@ $$\hat{y}_{sku, t} = \text{Base}_{sku, t} \times \text{DiwaliLift}(w_{diwali}) \
 
 ### Data Leakage Prevention:
 > **Line that stops future data leaking into training**:
-> In [`ml/train_and_forecast.py:L52`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/ml/train_and_forecast.py#L52):
+> In [`ml/train_and_forecast.py:L58`](file:///c:/Users/abhir/Downloads/VIKMO_DealerDesk_Assignment%20(1)/VIKMO%20DealerDesk%20Assignment/ml/train_and_forecast.py#L58):
 > ```python
 > history = sales_df[sales_df["week_start"] <= train_cutoff].copy()
 > ```
