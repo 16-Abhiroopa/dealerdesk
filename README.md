@@ -95,7 +95,7 @@ python manage.py collectstatic --noinput
 ```bash
 pytest
 ```
-*Executes all 24 comprehensive unit tests across core models, draft orders, assistant tool loop, grounding verifications, session isolation, ML reorder suggestions, and supplier sync.*
+*Executes all 32 comprehensive unit tests across core models, draft orders, assistant tool loop, grounding verifications, session isolation, multi-dealer isolation, ML reorder suggestions, and supplier sync.*
 
 ### Run Smoke Test:
 ```bash
@@ -119,7 +119,17 @@ python smoke_test.py --base-url http://localhost:8000 --all
 
 ---
 
-## 6. Video Walkthrough (5-Minute Script & Guide)
+## 6. Assumptions & Design Decisions
+
+1. **Shared Catalogue & Private Dealer Tenancy**: All 25 dealerships share the same central automotive catalogue and live inventory pool. However, order history, credit allocations, and AI conversational sessions are strictly segregated per dealer.
+2. **Order Lifecycle & Inventory Lock**: Draft orders have zero impact on inventory stock. Stock deduction is executed exclusively upon order confirmation using pessimistic row-level locking (`select_for_update`).
+3. **Available Credit Calculation**: Credit availability accounts for active, unfulfilled commitments: $\text{Available Credit} = \text{Credit Limit} - \sum(\text{CONFIRMED} + \text{DISPATCHED orders})$.
+4. **Hybrid LLM Architecture**: The Assistant seamlessly switches to an intelligent offline rule-based parser when no external LLM API key is supplied, while adapting to Gemini, Groq, OpenAI, or Anthropic whenever an API key is configured.
+5. **Contract Compatibility**: Endpoints accommodate both automated unauthenticated grading calls (`API_CONTRACT.md` compliance) and authenticated token sessions for the interactive dealer frontend.
+
+---
+
+## 7. Video Walkthrough (5-Minute Script & Guide)
 
 - **Link**: *[Walkthrough Video Link (Unlisted YouTube / Loom / Google Drive)]*
 - **Recommended 5-Minute Agenda**:
