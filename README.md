@@ -129,19 +129,4 @@ python smoke_test.py --base-url http://localhost:8000 --all
 
 ---
 
-## 7. Video Walkthrough (5-Minute Script & Guide)
-
-- **Link**: *[Walkthrough Video Link (Unlisted YouTube / Loom / Google Drive)]*
-- **Recommended 5-Minute Agenda**:
-  1. **0:00 - 0:45 | Overview & Architecture**: Show repo structure, PostgreSQL configuration, and unified React + DRF architecture.
-  2. **0:45 - 2:00 | Dealer Assistant (Part C)**:
-     - Demonstrate `search_parts` and live inventory tool grounding.
-     - Show prompt injection defense: untrusted text from supplier (e.g. `CHN-1037` promo code) is ignored by the LLM.
-     - Demonstrate multi-turn drafting of an order and safety boundary (LLM refuses to confirm orders).
-  3. **2:00 - 3:15 | Demand Forecasting & Reorder (Part D)**:
-     - Explain feature engineering without data leakage, Diwali festive lift curve, and baseline comparisons (beats Naive, MA-4, and YoY).
-     - Show `/api/forecast/{sku}/` chart in the UI and `/api/reorder-suggestions/` formula verification ($SS = z \times \sigma \times \sqrt{L}$).
-  4. **3:15 - 4:15 | Frontend Dashboard (Part E) & Live API Integration**:
-     - Walk through Overview KPIs, Searchable Catalogue, Inventory edits, and Orders tab.
-  5. **4:15 - 5:00 | Test Results & Deployment Verification**:
-     - Show all 24 pytest tests passing and `smoke_test.py --track aiml` 10/10 pass.
+- **Link**: https://dealerdesk-6.onrender.com/
