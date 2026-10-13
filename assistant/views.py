@@ -22,11 +22,21 @@ class ChatAssistantView(APIView):
         auth_dealer = get_authenticated_dealer(request)
         if auth_dealer:
             requested_dealer_id = data.get("dealer_id")
+            if requested_dealer_id is not None:
+                try:
+                    requested_dealer_id = int(requested_dealer_id)
+                except (ValueError, TypeError):
+                    pass
             if requested_dealer_id and requested_dealer_id != auth_dealer.id:
                 raise ValidationAppError("You cannot chat as another dealer.")
             dealer_id = auth_dealer.id
         else:
             dealer_id = data.get("dealer_id")
+            if dealer_id is not None:
+                try:
+                    dealer_id = int(dealer_id)
+                except (ValueError, TypeError):
+                    pass
 
         session_id = data.get("session_id")
         if not session_id or session_id == "auto":

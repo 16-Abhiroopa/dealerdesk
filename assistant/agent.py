@@ -137,9 +137,23 @@ def run_assistant_turn(session_id: str, dealer_id: int, user_message: str) -> Di
                 tools=TOOL_DEFINITIONS,
             )
         except Exception:
-            logger.exception("Dealer assistant provider request failed")
-            final_reply = "I cannot reach the assistant service right now. Please try again shortly."
-            break
+            logger.warning("Dealer assistant provider request failed; falling back to MockLLMAdapter")
+            from assistant.llm_adapters import MockLLMAdapter
+            if not isinstance(adapter, MockLLMAdapter):
+                adapter = MockLLMAdapter()
+                try:
+                    response = adapter.generate_turn(
+                        messages=conversation_history,
+                        system_prompt=SYSTEM_PROMPT,
+                        tools=TOOL_DEFINITIONS,
+                    )
+                except Exception:
+                    logger.exception("Fallback MockLLMAdapter also failed")
+                    final_reply = "I cannot reach the assistant service right now. Please try again shortly."
+                    break
+            else:
+                final_reply = "I cannot reach the assistant service right now. Please try again shortly."
+                break
 
         if not response.tool_calls:
             final_reply = response.content
@@ -232,8 +246,10 @@ def run_assistant_turn(session_id: str, dealer_id: int, user_message: str) -> Di
 
     # 6. Extraction & Validation of Cited SKUs
     found_sku_matches = SKU_PATTERN.findall(final_reply)
+    user_skus = set(SKU_PATTERN.findall(clean_message))
     valid_skus = set(Product.objects.filter(sku__in=found_sku_matches).values_list("sku", flat=True))
-    if not _reply_is_grounded(final_reply, grounded_prices, grounded_stocks, valid_skus & grounded_skus):
+    allowed_skus = (valid_skus & grounded_skus) | (valid_skus & user_skus)
+    if not _reply_is_grounded(final_reply, grounded_prices, grounded_stocks, allowed_skus):
         final_reply = "I cannot verify those product details from a live catalogue check. Please ask me to search or check a specific SKU."
         found_sku_matches = []
     cited_skus = list(dict.fromkeys(sku for sku in found_sku_matches if sku in valid_skus))
@@ -252,9 +268,11 @@ def run_assistant_turn(session_id: str, dealer_id: int, user_message: str) -> Di
             tool_calls=turn_tool_calls if turn_tool_calls else None,
         )
 
+    mode = getattr(adapter, "mode", "rule_based")
     return {
         "reply": final_reply,
         "cited_skus": cited_skus,
         "tool_calls": turn_tool_calls,
         "actions": turn_actions,
+        "mode": mode,
     }

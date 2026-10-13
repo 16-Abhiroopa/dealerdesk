@@ -139,8 +139,13 @@ def normalize_category(text: Optional[str]) -> Optional[str]:
 
 
 def tokenize(text: str) -> List[str]:
-    """Simple alphanumeric tokenization."""
-    return re.findall(r"\w+", text.lower())
+    """Simple alphanumeric tokenization with basic plural normalization."""
+    tokens = []
+    for t in re.findall(r"\w+", text.lower()):
+        tokens.append(t)
+        if t.endswith("s") and len(t) > 3 and not t.endswith("ss"):
+            tokens.append(t[:-1])
+    return tokens
 
 
 def search_catalogue(

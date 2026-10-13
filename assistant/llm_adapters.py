@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import time
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Set
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +127,9 @@ class GeminiAdapter(BaseLLMAdapter):
                 )
                 break
             except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "401" in err_str or "403" in err_str:
+                    raise
                 if attempt == 2:
                     raise
                 time.sleep(1.0 * (2**attempt))
@@ -438,12 +441,24 @@ class MockLLMAdapter(BaseLLMAdapter):
                 break
 
         lower = user_text.lower()
+        sku_match = re.search(r"\b[A-Z]{3}-\d{4}\b", user_text.upper())
+        qty_match = re.search(r"\b(?:order|put|reserve|aside|need|take)\s+(\d+)", lower) or re.search(r"(\d+)\s+(?:units|pieces|sets|items)", lower)
 
         # Check for off-topic queries
-        off_topic_keywords = ["weather", "poem", "python code", "president", "politics", "recipe", "write a story"]
+        off_topic_keywords = ["weather", "poem", "python code", "president", "politics", "recipe", "write a story", "tell me a joke"]
         if any(kw in lower for kw in off_topic_keywords):
             return LLMResponse(
                 content="I am DealerDesk's assistant and can only assist with automotive parts, catalogue inquiries, stock checks, and draft orders."
+            )
+
+        # Check for greeting or capability questions (when not asking for a specific part or order)
+        greeting_words = {"hello", "hi", "hey", "good morning", "good afternoon", "good evening", "greetings"}
+        capability_phrases = ["what can you do", "who are you", "what are your features", "how do you work", "help me"]
+        tokens = set(re.findall(r"\w+", lower))
+        has_part_intent = any(k in lower for k in ["brake", "pad", "oil", "filter", "chain", "sprocket", "plug", "tyre", "tire", "battery", "light", "stock", "price", "cost", "order", "status"])
+        if (tokens.intersection(greeting_words) or any(phrase in lower for phrase in capability_phrases) or lower.strip() in ("help", "help?")) and not sku_match and not has_part_intent:
+            return LLMResponse(
+                content="Hello! I am your DealerDesk Assistant. I can help you search our automotive parts catalogue, check real-time stock and prices, verify order status, and create draft orders. How can I assist you today?"
             )
 
         # Check for ambiguity (e.g. "brake pads" without vehicle)
@@ -470,9 +485,6 @@ class MockLLMAdapter(BaseLLMAdapter):
             )
 
         # Check for order creation intent: e.g. "put 10 aside for me", "order 5 units of BRK-1044"
-        sku_match = re.search(r"\b[A-Z]{3}-\d{4}\b", user_text.upper())
-        qty_match = re.search(r"\b(?:order|put|reserve|aside|need|take)\s+(\d+)", lower) or re.search(r"(\d+)\s+(?:units|pieces|sets|items)", lower)
-
         if "put" in lower and "aside" in lower and not sku_match:
             # Ambiguous: put aside without SKU
             # Check if previous message discussed a SKU
@@ -496,10 +508,10 @@ class MockLLMAdapter(BaseLLMAdapter):
         # Incomplete order intent: e.g. "I want to place an order", "buy some parts", or general "order" without sku
         if any(w in lower for w in ["draft order", "place order", "place an order", "want to order", "create order", "buy parts", "make an order"]) or ("order" in lower and not sku_match and not qty_match):
             return LLMResponse(content="Which product SKU and how many units would you like to include in this draft order?")
-        if sku_match and not qty_match and any(w in lower for w in ["order", "put aside", "draft"]):
+        if sku_match and not qty_match and any(w in lower for w in ["order", "put aside", "draft", "reserve", "buy"]):
             return LLMResponse(content=f"How many units of {sku_match.group(0)} would you like to draft?")
 
-        if ("order" in lower or "put" in lower) and sku_match:
+        if any(w in lower for w in ["order", "put", "reserve", "draft", "buy"]) and sku_match:
             sku = sku_match.group(0)
             qty = int(qty_match.group(1)) if qty_match else 1
             return LLMResponse(
@@ -510,8 +522,8 @@ class MockLLMAdapter(BaseLLMAdapter):
                 }]
             )
 
-        # Check for stock or price check intent: "how many in stock", "check stock of BRK-1044", "price of ACC-1001"
-        if ("stock" in lower or "how many" in lower or "price" in lower or "cost" in lower or "how much" in lower) and sku_match:
+        # Check for SKU inquiry intent (if user mentions a SKU and is not ordering)
+        if sku_match:
             sku = sku_match.group(0)
             return LLMResponse(
                 tool_calls=[{
@@ -532,59 +544,92 @@ class MockLLMAdapter(BaseLLMAdapter):
             )
 
         # Default catalogue search:
-        # Extract vehicle if mentioned
-        vehicle = None
-        for v in [
-            "KTM Duke 390", "Bajaj Pulsar 150", "Bajaj Dominar 400", "Yamaha R15 V4",
-            "TVS Apache RTR 200", "Royal Enfield Classic 350", "Universal"
-        ]:
-            if v.lower() in lower or v.split()[-1].lower() in lower:
-                vehicle = v
-                break
+        # Extract vehicle and category using hybrid retrieval normalization
+        from assistant.retrieval import normalize_vehicle, normalize_category
+        vehicle = normalize_vehicle(user_text)
+        category = normalize_category(user_text)
 
         return LLMResponse(
             tool_calls=[{
                 "id": "call_search_parts",
                 "name": "search_parts",
-                "arguments": {"query": user_text, "vehicle": vehicle},
+                "arguments": {"query": user_text, "vehicle": vehicle, "category": category},
             }]
         )
 
 
+_FAILED_PROVIDERS: Set[str] = set()
+
+
+class ResilientLLMAdapter(BaseLLMAdapter):
+    """Wraps an external LLM adapter with automatic seamless fallback to MockLLMAdapter."""
+
+    def __init__(self, primary: BaseLLMAdapter, fallback: BaseLLMAdapter):
+        self.primary = primary
+        self.fallback = fallback
+        provider_name = type(primary).__name__
+        self.primary_failed = provider_name in _FAILED_PROVIDERS
+        self.mode = "rule_based" if self.primary_failed else ("gemini" if isinstance(primary, GeminiAdapter) else "external")
+
+    def generate_turn(
+        self,
+        messages: List[Dict[str, Any]],
+        system_prompt: str,
+        tools: List[Dict[str, Any]],
+    ) -> LLMResponse:
+        provider_name = type(self.primary).__name__
+        if not self.primary_failed and provider_name not in _FAILED_PROVIDERS:
+            try:
+                return self.primary.generate_turn(messages, system_prompt, tools)
+            except Exception as e:
+                logger.warning(
+                    "Primary LLM adapter (%s) request failed (%s). Falling back to MockLLMAdapter.",
+                    provider_name,
+                    e,
+                )
+                self.primary_failed = True
+                _FAILED_PROVIDERS.add(provider_name)
+                self.mode = "rule_based"
+
+        return self.fallback.generate_turn(messages, system_prompt, tools)
+
+
 def get_llm_adapter() -> BaseLLMAdapter:
-    """Instantiate and return the highest priority available LLM adapter."""
+    """Instantiate and return the highest priority available LLM adapter, wrapped with resilient fallback."""
     # Check force mock flag (e.g. in test environment)
     if os.environ.get("USE_MOCK_LLM", "0") == "1":
         return MockLLMAdapter()
 
+    fallback = MockLLMAdapter()
+
     gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if gemini_key:
         try:
-            return GeminiAdapter(api_key=gemini_key)
+            return ResilientLLMAdapter(GeminiAdapter(api_key=gemini_key), fallback)
         except Exception as e:
             logger.warning("Failed to initialize GeminiAdapter: %s", e)
 
     groq_key = os.environ.get("GROQ_API_KEY", "").strip()
     if groq_key:
         try:
-            return GroqAdapter(api_key=groq_key)
+            return ResilientLLMAdapter(GroqAdapter(api_key=groq_key), fallback)
         except Exception as e:
             logger.warning("Failed to initialize GroqAdapter: %s", e)
 
     openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if openai_key:
         try:
-            return OpenAIAdapter(api_key=openai_key)
+            return ResilientLLMAdapter(OpenAIAdapter(api_key=openai_key), fallback)
         except Exception as e:
             logger.warning("Failed to initialize OpenAIAdapter: %s", e)
 
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if anthropic_key:
         try:
-            return AnthropicAdapter(api_key=anthropic_key)
+            return ResilientLLMAdapter(AnthropicAdapter(api_key=anthropic_key), fallback)
         except Exception as e:
             logger.warning("Failed to initialize AnthropicAdapter: %s", e)
 
     # Fallback to MockAdapter if no provider keys are configured
     logger.info("No active LLM provider keys found; falling back to MockLLMAdapter.")
-    return MockLLMAdapter()
+    return fallback

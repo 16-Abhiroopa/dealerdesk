@@ -368,6 +368,7 @@ export default function App() {
   };
 
   const handleQuickSwitch = async (dealer: Dealer) => {
+    localStorage.removeItem('dealerdesk_token');
     setSelectedDealerId(dealer.id);
     await refreshDealerFinancials(dealer.id);
     await loadOrders(dealer.id);
@@ -580,6 +581,7 @@ export default function App() {
             value={selectedDealerId} 
             onChange={e => {
               const id = Number(e.target.value);
+              localStorage.removeItem('dealerdesk_token');
               setSelectedDealerId(id);
               refreshDealerFinancials(id);
               loadOrders(id);
